@@ -22,3 +22,23 @@ dotnet run
 
 - `appsettings.Development.json` is ignored by git for safety.
 - Swagger UI is available at `/swagger` in Development.
+
+## Docker
+
+Build:
+
+```
+docker build -t easy_record_working_api:latest .
+```
+
+Run (set your own values):
+
+```
+docker run -p 8080:8080 ^
+  -e ConnectionStrings__Default="Server=127.0.0.1;Port=3306;Database=easy_record_working;User ID=root;Password=your_password;" ^
+  -e Jwt__Issuer="EasyRecordWorkingApi" ^
+  -e Jwt__Audience="EasyRecordWorkingApi" ^
+  -e Jwt__Key="ReplaceWithAStrongKeyAtLeast32Chars" ^
+  -e Jwt__ExpiresMinutes=720 ^
+  easy_record_working_api:latest
+```
