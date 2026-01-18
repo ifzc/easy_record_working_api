@@ -42,3 +42,16 @@ docker run -p 8080:8080 ^
   -e Jwt__ExpiresMinutes=720 ^
   easy_record_working_api:latest
 ```
+
+## Configuration
+
+The API reads configuration from environment variables by default.
+Use `__` to map to nested settings, for example:
+
+```
+ConnectionStrings__Default=...
+Jwt__Issuer=EasyRecordWorkingApi
+Jwt__Audience=EasyRecordWorkingApi
+Jwt__Key=ReplaceWithAStrongKeyAtLeast32Chars
+Jwt__ExpiresMinutes=720
+```
