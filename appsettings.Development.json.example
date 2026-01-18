@@ -1,0 +1,17 @@
+{
+  "ConnectionStrings": {
+    "Default": "Server=127.0.0.1;Port=3306;Database=easy_record_working;User ID=root;Password=your_password;"
+  },
+  "Jwt": {
+    "Issuer": "EasyRecordWorkingApi",
+    "Audience": "EasyRecordWorkingApi",
+    "Key": "ReplaceWithAStrongKeyAtLeast32Chars",
+    "ExpiresMinutes": 720
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  }
+}
