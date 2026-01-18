@@ -1,0 +1,10 @@
+bin/
+obj/
+.git/
+.idea/
+*.user
+*.suo
+*.cache
+*.nupkg
+*.log
+appsettings.Development.json
