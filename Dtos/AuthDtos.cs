@@ -6,6 +6,14 @@ public class LoginRequest
     public string Password { get; set; } = string.Empty;
 }
 
+public class RegisterRequest
+{
+    public string TenantName { get; set; } = string.Empty;
+    public string Account { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
+}
+
 public class LoginResponse
 {
     public string Token { get; set; } = string.Empty;

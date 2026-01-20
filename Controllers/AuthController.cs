@@ -1,3 +1,4 @@
+using System.Text;
 using EasyRecordWorkingApi.Data;
 using EasyRecordWorkingApi.Dtos;
 using EasyRecordWorkingApi.Models;
@@ -90,6 +91,95 @@ public class AuthController : ApiControllerBase
         {
             return Failure(401, 40101, "账号或密码错误");
         }
+
+        var token = _jwtTokenService.CreateToken(user, tenant);
+        var response = new LoginResponse
+        {
+            Token = token,
+            User = new LoginUser
+            {
+                Id = user.Id,
+                Account = user.Account,
+                DisplayName = user.DisplayName,
+                Role = user.Role
+            },
+            Tenant = new LoginTenant
+            {
+                Id = tenant.Id,
+                Code = tenant.Code,
+                Name = tenant.Name
+            }
+        };
+
+        return Success(response);
+    }
+
+    [AllowAnonymous]
+    [HttpPost("register")]
+    public async Task<IActionResult> Register([FromBody] RegisterRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Account)
+            || string.IsNullOrWhiteSpace(request.Password))
+        {
+            return Failure(400, 40001, "参数错误", "account 和 password 不能为空");
+        }
+
+        if (request.Password.Length < 6)
+        {
+            return Failure(400, 40001, "参数错误", "password 长度需至少 6 位");
+        }
+
+        var account = request.Account.Trim();
+        var displayName = string.IsNullOrWhiteSpace(request.DisplayName) ? null : request.DisplayName.Trim();
+        var tenantName = string.IsNullOrWhiteSpace(request.TenantName) ? string.Empty : request.TenantName.Trim();
+
+        if (string.IsNullOrWhiteSpace(tenantName))
+        {
+            tenantName = string.IsNullOrWhiteSpace(displayName) ? account : displayName;
+        }
+
+        if (tenantName.Length > 100)
+        {
+            return Failure(400, 40001, "参数错误", "tenant_name 长度不能超过 100");
+        }
+
+        if (account.Contains('/') || account.Contains('@'))
+        {
+            return Failure(400, 40001, "参数错误", "account 不能包含 '/' 或 '@'");
+        }
+
+        if (account.Length > 100)
+        {
+            return Failure(400, 40001, "参数错误", "account 长度不能超过 100");
+        }
+
+        if (displayName != null && displayName.Length > 100)
+        {
+            return Failure(400, 40001, "参数错误", "display_name 长度不能超过 100");
+        }
+
+        var tenant = new Tenant
+        {
+            Id = Guid.NewGuid(),
+            Code = GenerateTenantCode(tenantName),
+            Name = tenantName,
+            Status = "active"
+        };
+
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenant.Id,
+            Account = account,
+            PasswordHash = _passwordHasher.Hash(request.Password),
+            DisplayName = displayName,
+            Role = "member",
+            Status = "active"
+        };
+
+        _dbContext.Tenants.Add(tenant);
+        _dbContext.Users.Add(user);
+        await _dbContext.SaveChangesAsync();
 
         var token = _jwtTokenService.CreateToken(user, tenant);
         var response = new LoginResponse
@@ -222,5 +312,45 @@ public class AuthController : ApiControllerBase
         }
 
         return (null, trimmed);
+    }
+
+    private static string GenerateTenantCode(string tenantName)
+    {
+        var baseCode = BuildTenantCodeBase(tenantName);
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var allowedBaseLength = 50 - 1 - suffix.Length;
+        if (allowedBaseLength <= 0)
+        {
+            return $"t-{suffix}";
+        }
+
+        if (baseCode.Length > allowedBaseLength)
+        {
+            baseCode = baseCode[..allowedBaseLength];
+        }
+
+        return $"{baseCode}-{suffix}";
+    }
+
+    private static string BuildTenantCodeBase(string tenantName)
+    {
+        var builder = new StringBuilder();
+        var lastDash = false;
+        foreach (var ch in tenantName.Trim())
+        {
+            if (ch <= 127 && char.IsLetterOrDigit(ch))
+            {
+                builder.Append(char.ToLowerInvariant(ch));
+                lastDash = false;
+            }
+            else if (builder.Length > 0 && !lastDash)
+            {
+                builder.Append('-');
+                lastDash = true;
+            }
+        }
+
+        var baseCode = builder.ToString().Trim('-');
+        return string.IsNullOrWhiteSpace(baseCode) ? "tenant" : baseCode;
     }
 }
