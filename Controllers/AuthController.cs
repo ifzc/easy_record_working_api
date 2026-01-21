@@ -284,6 +284,44 @@ public class AuthController : ApiControllerBase
     }
 
     [Authorize]
+    [HttpPost("change-display-name")]
+    public async Task<IActionResult> ChangeDisplayName([FromBody] ChangeDisplayNameRequest request)
+    {
+        if (request.DisplayName == null)
+        {
+            return Failure(400, 40001, "鍙傛暟閿欒", "display_name 涓嶈兘涓虹┖");
+        }
+
+        var displayName = string.IsNullOrWhiteSpace(request.DisplayName) ? null : request.DisplayName.Trim();
+        if (displayName != null && displayName.Length > 100)
+        {
+            return Failure(400, 40001, "鍙傛暟閿欒", "display_name 闀垮害涓嶈兘瓒呰繃 100");
+        }
+
+        var userId = GetUserId();
+        var tenantId = GetTenantId();
+        if (userId == Guid.Empty || tenantId == Guid.Empty)
+        {
+            return Failure(401, 40103, "鏈櫥褰?");
+        }
+
+        var user = await _dbContext.Users
+            .FirstOrDefaultAsync(u => u.Id == userId && u.TenantId == tenantId);
+        if (user == null)
+        {
+            return Failure(401, 40103, "鏈櫥褰?");
+        }
+
+        user.DisplayName = displayName;
+        await _dbContext.SaveChangesAsync();
+
+        return Success(new
+        {
+            DisplayName = user.DisplayName
+        });
+    }
+
+    [Authorize]
     [HttpPost("logout")]
     public IActionResult Logout()
     {

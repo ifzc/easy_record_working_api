@@ -114,17 +114,27 @@ public class EmployeesController : ApiControllerBase
             return Failure(400, 40001, "参数错误", "name 和 type 不能为空");
         }
 
-        if (!IsValidEmployeeType(request.Type))
+        var name = request.Name.Trim();
+        var type = request.Type.Trim();
+
+        if (!IsValidEmployeeType(type))
         {
             return Failure(400, 40001, "参数错误", "type 必须为 正式工 或 临时工");
+        }
+
+        var duplicated = await _dbContext.Employees.AsNoTracking()
+            .AnyAsync(e => e.TenantId == tenantId && e.Name == name);
+        if (duplicated)
+        {
+            return Failure(409, 40901, "重复记录");
         }
 
         var employee = new Employee
         {
             Id = Guid.NewGuid(),
             TenantId = tenantId,
-            Name = request.Name.Trim(),
-            Type = request.Type.Trim(),
+            Name = name,
+            Type = type,
             IsActive = true,
             Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim()
         };
@@ -245,6 +255,13 @@ public class EmployeesController : ApiControllerBase
             return Failure(400, 40001, "参数错误", "file 不能为空");
         }
 
+        var existingNames = new HashSet<string>(
+            await _dbContext.Employees.AsNoTracking()
+                .Where(e => e.TenantId == tenantId)
+                .Select(e => e.Name)
+                .ToListAsync(),
+            StringComparer.OrdinalIgnoreCase);
+
         var imported = 0;
         var skipped = 0;
 
@@ -295,6 +312,14 @@ public class EmployeesController : ApiControllerBase
                 skipped++;
                 continue;
             }
+
+            if (existingNames.Contains(name))
+            {
+                skipped++;
+                continue;
+            }
+
+            existingNames.Add(name);
 
             var employee = new Employee
             {
