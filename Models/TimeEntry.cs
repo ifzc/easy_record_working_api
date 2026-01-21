@@ -10,6 +10,8 @@ public class TimeEntry : TenantEntity
 
     public decimal OvertimeHours { get; set; }
 
+    public string? Remark { get; set; }
+
     public Employee? Employee { get; set; }
 
     public Tenant? Tenant { get; set; }

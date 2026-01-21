@@ -92,7 +92,9 @@ public class TimeEntriesController : ApiControllerBase
                 EmployeeType = t.Employee != null ? t.Employee.Type : string.Empty,
                 t.WorkDate,
                 t.NormalHours,
-                t.OvertimeHours
+                t.OvertimeHours,
+                t.Remark,
+                t.CreatedAt
             })
             .ToListAsync();
 
@@ -105,6 +107,8 @@ public class TimeEntriesController : ApiControllerBase
             WorkDate = DateOnly.FromDateTime(t.WorkDate),
             NormalHours = t.NormalHours,
             OvertimeHours = t.OvertimeHours,
+            Remark = t.Remark,
+            CreatedAt = t.CreatedAt,
             TotalHours = t.NormalHours + t.OvertimeHours,
             WorkUnits = t.NormalHours / 8m + t.OvertimeHours / 6m
         }).ToList();
@@ -161,7 +165,8 @@ public class TimeEntriesController : ApiControllerBase
             EmployeeId = request.EmployeeId,
             WorkDate = workDate,
             NormalHours = request.NormalHours,
-            OvertimeHours = request.OvertimeHours
+            OvertimeHours = request.OvertimeHours,
+            Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim()
         };
 
         _dbContext.TimeEntries.Add(timeEntry);
@@ -176,6 +181,8 @@ public class TimeEntriesController : ApiControllerBase
             WorkDate = DateOnly.FromDateTime(timeEntry.WorkDate),
             NormalHours = timeEntry.NormalHours,
             OvertimeHours = timeEntry.OvertimeHours,
+            Remark = timeEntry.Remark,
+            CreatedAt = timeEntry.CreatedAt,
             TotalHours = timeEntry.NormalHours + timeEntry.OvertimeHours,
             WorkUnits = timeEntry.NormalHours / 8m + timeEntry.OvertimeHours / 6m
         };
@@ -223,6 +230,10 @@ public class TimeEntriesController : ApiControllerBase
         timeEntry.WorkDate = workDate;
         timeEntry.NormalHours = request.NormalHours;
         timeEntry.OvertimeHours = request.OvertimeHours;
+        if (request.Remark != null)
+        {
+            timeEntry.Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
+        }
 
         await _dbContext.SaveChangesAsync();
 
@@ -235,6 +246,8 @@ public class TimeEntriesController : ApiControllerBase
             WorkDate = DateOnly.FromDateTime(timeEntry.WorkDate),
             NormalHours = timeEntry.NormalHours,
             OvertimeHours = timeEntry.OvertimeHours,
+            Remark = timeEntry.Remark,
+            CreatedAt = timeEntry.CreatedAt,
             TotalHours = timeEntry.NormalHours + timeEntry.OvertimeHours,
             WorkUnits = timeEntry.NormalHours / 8m + timeEntry.OvertimeHours / 6m
         };
@@ -265,7 +278,11 @@ public class TimeEntriesController : ApiControllerBase
     }
 
     [HttpGet("summary")]
-    public async Task<IActionResult> GetSummary([FromQuery] string? month, [FromQuery] string? date)
+    public async Task<IActionResult> GetSummary(
+        [FromQuery] string? month,
+        [FromQuery] string? date,
+        [FromQuery(Name = "employee_id")] Guid? employeeId,
+        [FromQuery(Name = "employee_type")] string? employeeType)
     {
         var tenantId = GetTenantId();
         if (tenantId == Guid.Empty)
@@ -301,24 +318,63 @@ public class TimeEntriesController : ApiControllerBase
             return Failure(400, 40001, "参数错误", "month 或 date 至少提供一个");
         }
 
-        var rawSummary = await _dbContext.TimeEntries.AsNoTracking()
-            .Where(t => t.TenantId == tenantId && t.WorkDate >= startDate && t.WorkDate <= endDate)
+        var query = _dbContext.TimeEntries.AsNoTracking()
+            .Where(t => t.TenantId == tenantId && t.WorkDate >= startDate && t.WorkDate <= endDate);
+
+        if (employeeId.HasValue)
+        {
+            query = query.Where(t => t.EmployeeId == employeeId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(employeeType))
+        {
+            query = query.Where(t => t.Employee != null && t.Employee.Type == employeeType);
+        }
+
+        var rawSummary = await query
             .GroupBy(t => t.WorkDate)
             .Select(g => new
             {
                 g.Key,
+                NormalHours = g.Sum(x => x.NormalHours),
+                OvertimeHours = g.Sum(x => x.OvertimeHours),
                 TotalHours = g.Sum(x => x.NormalHours + x.OvertimeHours),
                 Headcount = g.Select(x => x.EmployeeId).Distinct().Count()
             })
             .OrderBy(x => x.Key)
             .ToListAsync();
 
-        var data = rawSummary.Select(x => new TimeEntrySummaryDto
+        var summaryByDate = rawSummary.ToDictionary(x => DateOnly.FromDateTime(x.Key));
+        var startDateOnly = DateOnly.FromDateTime(startDate);
+        var endDateOnly = DateOnly.FromDateTime(endDate);
+        var data = new List<TimeEntrySummaryDto>();
+
+        for (var current = startDateOnly; current.CompareTo(endDateOnly) <= 0; current = current.AddDays(1))
         {
-            Date = DateOnly.FromDateTime(x.Key),
-            TotalHours = x.TotalHours,
-            Headcount = x.Headcount
-        }).ToList();
+            if (summaryByDate.TryGetValue(current, out var summary))
+            {
+                data.Add(new TimeEntrySummaryDto
+                {
+                    Date = current,
+                    NormalHours = summary.NormalHours,
+                    OvertimeHours = summary.OvertimeHours,
+                    TotalHours = summary.TotalHours,
+                    TotalWorkUnits = summary.NormalHours / 8m + summary.OvertimeHours / 6m,
+                    Headcount = summary.Headcount
+                });
+                continue;
+            }
+
+            data.Add(new TimeEntrySummaryDto
+            {
+                Date = current,
+                NormalHours = 0m,
+                OvertimeHours = 0m,
+                TotalHours = 0m,
+                TotalWorkUnits = 0m,
+                Headcount = 0
+            });
+        }
 
         return Success(data);
     }

@@ -83,6 +83,7 @@ public class EmployeesController : ApiControllerBase
                 Name = e.Name,
                 Type = e.Type,
                 IsActive = e.IsActive,
+                Remark = e.Remark,
                 CreatedAt = e.CreatedAt,
                 UpdatedAt = e.UpdatedAt
             })
@@ -124,7 +125,8 @@ public class EmployeesController : ApiControllerBase
             TenantId = tenantId,
             Name = request.Name.Trim(),
             Type = request.Type.Trim(),
-            IsActive = true
+            IsActive = true,
+            Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim()
         };
 
         _dbContext.Employees.Add(employee);
@@ -136,6 +138,7 @@ public class EmployeesController : ApiControllerBase
             Name = employee.Name,
             Type = employee.Type,
             IsActive = employee.IsActive,
+            Remark = employee.Remark,
             CreatedAt = employee.CreatedAt,
             UpdatedAt = employee.UpdatedAt
         };
@@ -184,6 +187,11 @@ public class EmployeesController : ApiControllerBase
             employee.IsActive = request.IsActive.Value;
         }
 
+        if (request.Remark != null)
+        {
+            employee.Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
+        }
+
         await _dbContext.SaveChangesAsync();
 
         var dto = new EmployeeDto
@@ -192,6 +200,7 @@ public class EmployeesController : ApiControllerBase
             Name = employee.Name,
             Type = employee.Type,
             IsActive = employee.IsActive,
+            Remark = employee.Remark,
             CreatedAt = employee.CreatedAt,
             UpdatedAt = employee.UpdatedAt
         };
@@ -263,7 +272,7 @@ public class EmployeesController : ApiControllerBase
                 continue;
             }
 
-            var parts = line.Split(',', 2, StringSplitOptions.TrimEntries);
+            var parts = line.Split(',', StringSplitOptions.TrimEntries);
             if (parts.Length < 2)
             {
                 skipped++;
@@ -272,6 +281,15 @@ public class EmployeesController : ApiControllerBase
 
             var name = parts[0].Trim();
             var type = parts[1].Trim();
+            var remarkStartIndex = 2;
+            if (parts.Length >= 3 && bool.TryParse(parts[2], out _))
+            {
+                remarkStartIndex = 3;
+            }
+
+            var remark = parts.Length > remarkStartIndex
+                ? string.Join(",", parts, remarkStartIndex, parts.Length - remarkStartIndex).Trim()
+                : string.Empty;
             if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(type) || !IsValidEmployeeType(type))
             {
                 skipped++;
@@ -284,7 +302,8 @@ public class EmployeesController : ApiControllerBase
                 TenantId = tenantId,
                 Name = name,
                 Type = type,
-                IsActive = true
+                IsActive = true,
+                Remark = string.IsNullOrWhiteSpace(remark) ? null : remark
             };
 
             _dbContext.Employees.Add(employee);
@@ -332,11 +351,12 @@ public class EmployeesController : ApiControllerBase
             .ToListAsync();
 
         var builder = new StringBuilder();
-        builder.AppendLine("员工姓名,员工类型,是否有效");
+        builder.AppendLine("员工姓名,员工类型,是否有效,备注");
         foreach (var employee in employees)
         {
             var activeText = employee.IsActive ? "true" : "false";
-            builder.AppendLine($"{employee.Name},{employee.Type},{activeText}");
+            var remark = employee.Remark ?? string.Empty;
+            builder.AppendLine($"{employee.Name},{employee.Type},{activeText},{remark}");
         }
 
         var bytes = Encoding.UTF8.GetBytes(builder.ToString());

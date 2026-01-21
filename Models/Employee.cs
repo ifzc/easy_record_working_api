@@ -8,5 +8,7 @@ public class Employee : TenantEntity
 
     public bool IsActive { get; set; } = true;
 
+    public string? Remark { get; set; }
+
     public Tenant? Tenant { get; set; }
 }

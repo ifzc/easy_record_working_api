@@ -9,6 +9,8 @@ public class TimeEntryDto
     public DateOnly WorkDate { get; set; }
     public decimal NormalHours { get; set; }
     public decimal OvertimeHours { get; set; }
+    public string? Remark { get; set; }
+    public DateTime CreatedAt { get; set; }
     public decimal TotalHours { get; set; }
     public decimal WorkUnits { get; set; }
 }
@@ -19,6 +21,7 @@ public class CreateTimeEntryRequest
     public DateOnly WorkDate { get; set; }
     public decimal NormalHours { get; set; } = 8;
     public decimal OvertimeHours { get; set; }
+    public string? Remark { get; set; }
 }
 
 public class UpdateTimeEntryRequest
@@ -27,11 +30,15 @@ public class UpdateTimeEntryRequest
     public DateOnly WorkDate { get; set; }
     public decimal NormalHours { get; set; }
     public decimal OvertimeHours { get; set; }
+    public string? Remark { get; set; }
 }
 
 public class TimeEntrySummaryDto
 {
     public DateOnly Date { get; set; }
+    public decimal NormalHours { get; set; }
+    public decimal OvertimeHours { get; set; }
     public decimal TotalHours { get; set; }
+    public decimal TotalWorkUnits { get; set; }
     public int Headcount { get; set; }
 }

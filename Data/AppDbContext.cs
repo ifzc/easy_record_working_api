@@ -54,6 +54,7 @@ public class AppDbContext : DbContext
             entity.Property(e => e.Name).HasMaxLength(50).IsRequired();
             entity.Property(e => e.Type).HasMaxLength(10).IsRequired();
             entity.Property(e => e.IsActive).HasDefaultValue(true).IsRequired();
+            entity.Property(e => e.Remark).HasMaxLength(200);
             entity.HasOne(e => e.Tenant)
                 .WithMany()
                 .HasForeignKey(e => e.TenantId)
@@ -71,6 +72,7 @@ public class AppDbContext : DbContext
             entity.Property(e => e.WorkDate).HasColumnType("date").IsRequired();
             entity.Property(e => e.NormalHours).HasPrecision(5, 2).HasDefaultValue(8).IsRequired();
             entity.Property(e => e.OvertimeHours).HasPrecision(5, 2).HasDefaultValue(0).IsRequired();
+            entity.Property(e => e.Remark).HasMaxLength(200);
             entity.HasOne(e => e.Employee)
                 .WithMany()
                 .HasForeignKey(e => e.EmployeeId)
