@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using EasyRecordWorkingApi.Data;
 using EasyRecordWorkingApi.Dtos;
 using EasyRecordWorkingApi.Models;
@@ -153,6 +153,13 @@ public class AuthController : ApiControllerBase
             return Failure(400, 40001, "参数错误", "account 长度不能超过 100");
         }
 
+        var accountExists = await _dbContext.Users.AsNoTracking()
+            .AnyAsync(u => u.Account == account);
+        if (accountExists)
+        {
+            return Failure(409, 40901, "账户已存在");
+        }
+
         if (displayName != null && displayName.Length > 100)
         {
             return Failure(400, 40001, "参数错误", "display_name 长度不能超过 100");
@@ -289,27 +296,27 @@ public class AuthController : ApiControllerBase
     {
         if (request.DisplayName == null)
         {
-            return Failure(400, 40001, "鍙傛暟閿欒", "display_name 涓嶈兘涓虹┖");
+            return Failure(400, 40001, "参数错误", "display_name 不能为空");
         }
 
         var displayName = string.IsNullOrWhiteSpace(request.DisplayName) ? null : request.DisplayName.Trim();
         if (displayName != null && displayName.Length > 100)
         {
-            return Failure(400, 40001, "鍙傛暟閿欒", "display_name 闀垮害涓嶈兘瓒呰繃 100");
+            return Failure(400, 40001, "参数错误", "display_name 长度不能超过 100");
         }
 
         var userId = GetUserId();
         var tenantId = GetTenantId();
         if (userId == Guid.Empty || tenantId == Guid.Empty)
         {
-            return Failure(401, 40103, "鏈櫥褰?");
+            return Failure(401, 40103, "未登录");
         }
 
         var user = await _dbContext.Users
             .FirstOrDefaultAsync(u => u.Id == userId && u.TenantId == tenantId);
         if (user == null)
         {
-            return Failure(401, 40103, "鏈櫥褰?");
+            return Failure(401, 40103, "未登录");
         }
 
         user.DisplayName = displayName;
