@@ -61,7 +61,7 @@ public class TimeEntriesController : ApiControllerBase
         var workDateValue = workDate.ToDateTime(TimeOnly.MinValue);
         var query = _dbContext.TimeEntries.AsNoTracking()
             .Include(t => t.Employee)
-            .Where(t => t.TenantId == tenantId && t.WorkDate == workDateValue);
+            .Where(t => t.TenantId == tenantId && !t.Deleted && t.WorkDate == workDateValue);
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
@@ -90,6 +90,7 @@ public class TimeEntriesController : ApiControllerBase
                 t.EmployeeId,
                 EmployeeName = t.Employee != null ? t.Employee.Name : string.Empty,
                 EmployeeType = t.Employee != null ? t.Employee.Type : string.Empty,
+                EmployeeWorkType = t.Employee != null ? t.Employee.WorkType : string.Empty,
                 t.WorkDate,
                 t.NormalHours,
                 t.OvertimeHours,
@@ -104,6 +105,7 @@ public class TimeEntriesController : ApiControllerBase
             EmployeeId = t.EmployeeId,
             EmployeeName = t.EmployeeName,
             EmployeeType = t.EmployeeType,
+            WorkType = t.EmployeeWorkType,
             WorkDate = DateOnly.FromDateTime(t.WorkDate),
             NormalHours = t.NormalHours,
             OvertimeHours = t.OvertimeHours,
@@ -135,29 +137,50 @@ public class TimeEntriesController : ApiControllerBase
 
         if (!IsValidHour(request.NormalHours) || !IsValidHour(request.OvertimeHours))
         {
-            return Failure(400, 40001, "参数错误", "工时必须为非负且步进为 0.5");
+            return Failure(400, 40001, "参数错误", "工时必须为非负且步进�?0.5");
         }
 
         var employee = await _dbContext.Employees.AsNoTracking()
-            .FirstOrDefaultAsync(e => e.Id == request.EmployeeId && e.TenantId == tenantId);
+            .FirstOrDefaultAsync(e => e.Id == request.EmployeeId && e.TenantId == tenantId && !e.Deleted);
         if (employee == null)
         {
             return Failure(404, 40401, "员工不存在");
         }
 
-        if (!employee.IsActive)
-        {
-            return Failure(400, 40001, "参数错误", "员工已停用");
-        }
-
         var workDate = request.WorkDate.ToDateTime(TimeOnly.MinValue);
-        var exists = await _dbContext.TimeEntries
-            .AnyAsync(t => t.TenantId == tenantId && t.EmployeeId == request.EmployeeId && t.WorkDate == workDate);
-        if (exists)
+        var existing = await _dbContext.TimeEntries
+            .FirstOrDefaultAsync(t => t.TenantId == tenantId && t.EmployeeId == request.EmployeeId && t.WorkDate == workDate);
+        if (existing != null)
         {
-            return Failure(409, 40901, "重复记录");
-        }
+            if (!existing.Deleted)
+            {
+                return Failure(409, 40901, "�ظ���¼");
+            }
 
+            existing.Deleted = false;
+            existing.NormalHours = request.NormalHours;
+            existing.OvertimeHours = request.OvertimeHours;
+            existing.Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
+            await _dbContext.SaveChangesAsync();
+
+            var restoredDto = new TimeEntryDto
+            {
+                Id = existing.Id,
+                EmployeeId = existing.EmployeeId,
+                EmployeeName = employee.Name,
+                EmployeeType = employee.Type,
+            WorkType = employee.WorkType,
+                WorkDate = DateOnly.FromDateTime(existing.WorkDate),
+                NormalHours = existing.NormalHours,
+                OvertimeHours = existing.OvertimeHours,
+                Remark = existing.Remark,
+                CreatedAt = existing.CreatedAt,
+                TotalHours = existing.NormalHours + existing.OvertimeHours,
+                WorkUnits = existing.NormalHours / 8m + existing.OvertimeHours / 6m
+            };
+
+            return Success(restoredDto);
+        }
         var timeEntry = new TimeEntry
         {
             Id = Guid.NewGuid(),
@@ -178,6 +201,7 @@ public class TimeEntriesController : ApiControllerBase
             EmployeeId = timeEntry.EmployeeId,
             EmployeeName = employee.Name,
             EmployeeType = employee.Type,
+            WorkType = employee.WorkType,
             WorkDate = DateOnly.FromDateTime(timeEntry.WorkDate),
             NormalHours = timeEntry.NormalHours,
             OvertimeHours = timeEntry.OvertimeHours,
@@ -211,12 +235,12 @@ public class TimeEntriesController : ApiControllerBase
 
         if (!IsValidHour(request.NormalHours) || !IsValidHour(request.OvertimeHours))
         {
-            return Failure(400, 40001, "参数错误", "工时必须为非负且步进为 0.5");
+            return Failure(400, 40001, "参数错误", "工时必须为非负且步进�?0.5");
         }
 
         var employeeIds = request.EmployeeIds.Distinct().ToList();
         var employees = await _dbContext.Employees.AsNoTracking()
-            .Where(e => e.TenantId == tenantId && employeeIds.Contains(e.Id))
+            .Where(e => e.TenantId == tenantId && !e.Deleted && employeeIds.Contains(e.Id))
             .ToListAsync();
 
         var employeeMap = employees.ToDictionary(e => e.Id);
@@ -244,41 +268,40 @@ public class TimeEntriesController : ApiControllerBase
                 continue;
             }
 
-            if (!employee.IsActive)
-            {
-                foreach (var workDate in workDates)
-                {
-                    details.Add(new BatchCreateTimeEntryDetail
-                    {
-                        EmployeeId = employeeId,
-                        WorkDate = workDate,
-                        Status = "skipped",
-                        Reason = "员工已停用"
-                    });
-                    skipped++;
-                }
-                continue;
-            }
-
             foreach (var workDate in workDates)
             {
                 var workDateTime = workDate.ToDateTime(TimeOnly.MinValue);
-                var exists = await _dbContext.TimeEntries
-                    .AnyAsync(t => t.TenantId == tenantId && t.EmployeeId == employeeId && t.WorkDate == workDateTime);
-
-                if (exists)
+                var existing = await _dbContext.TimeEntries
+                    .FirstOrDefaultAsync(t => t.TenantId == tenantId && t.EmployeeId == employeeId && t.WorkDate == workDateTime);
+                if (existing != null)
                 {
+                    if (!existing.Deleted)
+                    {
+                        details.Add(new BatchCreateTimeEntryDetail
+                        {
+                            EmployeeId = employeeId,
+                            WorkDate = workDate,
+                            Status = "skipped",
+                            Reason = "��¼�Ѵ���"
+                        });
+                        skipped++;
+                        continue;
+                    }
+
+                    existing.Deleted = false;
+                    existing.NormalHours = request.NormalHours;
+                    existing.OvertimeHours = request.OvertimeHours;
+                    existing.Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
                     details.Add(new BatchCreateTimeEntryDetail
                     {
                         EmployeeId = employeeId,
                         WorkDate = workDate,
-                        Status = "skipped",
-                        Reason = "记录已存在"
+                        Status = "created",
+                        Reason = null
                     });
-                    skipped++;
+                    created++;
                     continue;
                 }
-
                 var timeEntry = new TimeEntry
                 {
                     Id = Guid.NewGuid(),
@@ -348,7 +371,7 @@ public class TimeEntriesController : ApiControllerBase
 
         var workDate = request.WorkDate.ToDateTime(TimeOnly.MinValue);
         var duplicateExists = await _dbContext.TimeEntries
-            .AnyAsync(t => t.Id != id && t.TenantId == tenantId && t.EmployeeId == request.EmployeeId && t.WorkDate == workDate);
+            .AnyAsync(t => t.Id != id && t.TenantId == tenantId && !t.Deleted && t.EmployeeId == request.EmployeeId && t.WorkDate == workDate);
         if (duplicateExists)
         {
             return Failure(409, 40901, "重复记录");
@@ -371,6 +394,7 @@ public class TimeEntriesController : ApiControllerBase
             EmployeeId = timeEntry.EmployeeId,
             EmployeeName = employee.Name,
             EmployeeType = employee.Type,
+            WorkType = employee.WorkType,
             WorkDate = DateOnly.FromDateTime(timeEntry.WorkDate),
             NormalHours = timeEntry.NormalHours,
             OvertimeHours = timeEntry.OvertimeHours,
@@ -393,13 +417,13 @@ public class TimeEntriesController : ApiControllerBase
         }
 
         var timeEntry = await _dbContext.TimeEntries
-            .FirstOrDefaultAsync(t => t.Id == id && t.TenantId == tenantId);
+            .FirstOrDefaultAsync(t => t.Id == id && t.TenantId == tenantId && !t.Deleted);
         if (timeEntry == null)
         {
             return Failure(404, 40401, "记工不存在");
         }
 
-        _dbContext.TimeEntries.Remove(timeEntry);
+        timeEntry.Deleted = true;
         await _dbContext.SaveChangesAsync();
 
         return Success(new { });
@@ -447,7 +471,7 @@ public class TimeEntriesController : ApiControllerBase
         }
 
         var query = _dbContext.TimeEntries.AsNoTracking()
-            .Where(t => t.TenantId == tenantId && t.WorkDate >= startDate && t.WorkDate <= endDate);
+            .Where(t => t.TenantId == tenantId && !t.Deleted && t.WorkDate >= startDate && t.WorkDate <= endDate);
 
         if (employeeId.HasValue)
         {
@@ -518,3 +542,4 @@ public class TimeEntriesController : ApiControllerBase
         return decimal.Truncate(scaled) == scaled;
     }
 }
+

@@ -25,7 +25,6 @@ public class ProjectsController : ApiControllerBase
     public async Task<IActionResult> GetProjects(
         [FromQuery] string? keyword,
         [FromQuery] string? status,
-        [FromQuery(Name = "is_active")] bool? isActive,
         [FromQuery] int page = 1,
         [FromQuery(Name = "page_size")] int pageSize = 20,
         [FromQuery] string? sort = null)
@@ -49,7 +48,7 @@ public class ProjectsController : ApiControllerBase
         pageSize = Math.Min(pageSize, 200);
 
         var query = _dbContext.Projects.AsNoTracking()
-            .Where(p => p.TenantId == tenantId);
+            .Where(p => p.TenantId == tenantId && !p.Deleted);
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
@@ -59,11 +58,6 @@ public class ProjectsController : ApiControllerBase
         if (!string.IsNullOrWhiteSpace(status))
         {
             query = query.Where(p => p.Status == status);
-        }
-
-        if (isActive.HasValue)
-        {
-            query = query.Where(p => p.IsActive == isActive.Value);
         }
 
         query = sort switch
@@ -83,7 +77,6 @@ public class ProjectsController : ApiControllerBase
                 Name = p.Name,
                 Code = p.Code,
                 Status = p.Status,
-                IsActive = p.IsActive,
                 PlannedStartDate = p.PlannedStartDate,
                 PlannedEndDate = p.PlannedEndDate,
                 Remark = p.Remark,
@@ -123,20 +116,55 @@ public class ProjectsController : ApiControllerBase
 
         if (!IsValidProjectStatus(status))
         {
-            return Failure(400, 40001, "参数错误", "status 必须为 active, pending, completed 或 archived");
+            return Failure(400, 40001, "参数错误", "status 必须�?active, pending, completed �?archived");
         }
 
-        var duplicated = await _dbContext.Projects.AsNoTracking()
-            .AnyAsync(p => p.TenantId == tenantId && p.Name == name);
-        if (duplicated)
+        var existingProject = await _dbContext.Projects
+            .FirstOrDefaultAsync(p => p.TenantId == tenantId && p.Name == name);
+        if (existingProject != null)
         {
-            return Failure(409, 40901, "重复记录", "项目名称已存在");
-        }
+            if (!existingProject.Deleted)
+            {
+                return Failure(409, 40901, "�ظ���¼", "��Ŀ�����Ѵ���");
+            }
 
+            if (!string.IsNullOrWhiteSpace(code))
+            {
+                var codeDuplicated = await _dbContext.Projects.AsNoTracking()
+                    .AnyAsync(p => p.TenantId == tenantId && !p.Deleted && p.Code == code && p.Id != existingProject.Id);
+                if (codeDuplicated)
+                {
+                    return Failure(409, 40901, "�ظ���¼", "��Ŀ�����Ѵ���");
+                }
+            }
+
+            existingProject.Deleted = false;
+            existingProject.Code = code;
+            existingProject.Status = status;
+            existingProject.PlannedStartDate = request.PlannedStartDate;
+            existingProject.PlannedEndDate = request.PlannedEndDate;
+            existingProject.Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
+            await _dbContext.SaveChangesAsync();
+
+            var restoredDto = new ProjectDto
+            {
+                Id = existingProject.Id,
+                Name = existingProject.Name,
+                Code = existingProject.Code,
+                Status = existingProject.Status,
+                PlannedStartDate = existingProject.PlannedStartDate,
+                PlannedEndDate = existingProject.PlannedEndDate,
+                Remark = existingProject.Remark,
+                CreatedAt = existingProject.CreatedAt,
+                UpdatedAt = existingProject.UpdatedAt
+            };
+
+            return Success(restoredDto);
+        }
         if (!string.IsNullOrWhiteSpace(code))
         {
             var codeDuplicated = await _dbContext.Projects.AsNoTracking()
-                .AnyAsync(p => p.TenantId == tenantId && p.Code == code);
+                .AnyAsync(p => p.TenantId == tenantId && !p.Deleted && p.Code == code);
             if (codeDuplicated)
             {
                 return Failure(409, 40901, "重复记录", "项目代码已存在");
@@ -150,7 +178,6 @@ public class ProjectsController : ApiControllerBase
             Name = name,
             Code = code,
             Status = status,
-            IsActive = true,
             PlannedStartDate = request.PlannedStartDate,
             PlannedEndDate = request.PlannedEndDate,
             Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim()
@@ -165,7 +192,6 @@ public class ProjectsController : ApiControllerBase
             Name = project.Name,
             Code = project.Code,
             Status = project.Status,
-            IsActive = project.IsActive,
             PlannedStartDate = project.PlannedStartDate,
             PlannedEndDate = project.PlannedEndDate,
             Remark = project.Remark,
@@ -186,7 +212,7 @@ public class ProjectsController : ApiControllerBase
         }
 
         var project = await _dbContext.Projects
-            .FirstOrDefaultAsync(p => p.Id == id && p.TenantId == tenantId);
+            .FirstOrDefaultAsync(p => p.Id == id && p.TenantId == tenantId && !p.Deleted);
         if (project == null)
         {
             return Failure(404, 40401, "项目不存在");
@@ -203,7 +229,7 @@ public class ProjectsController : ApiControllerBase
             if (name != project.Name)
             {
                 var duplicated = await _dbContext.Projects.AsNoTracking()
-                    .AnyAsync(p => p.TenantId == tenantId && p.Name == name && p.Id != id);
+                    .AnyAsync(p => p.TenantId == tenantId && !p.Deleted && p.Name == name && p.Id != id);
                 if (duplicated)
                 {
                     return Failure(409, 40901, "重复记录", "项目名称已存在");
@@ -219,7 +245,7 @@ public class ProjectsController : ApiControllerBase
             if (code != project.Code && !string.IsNullOrWhiteSpace(code))
             {
                 var codeDuplicated = await _dbContext.Projects.AsNoTracking()
-                    .AnyAsync(p => p.TenantId == tenantId && p.Code == code && p.Id != id);
+                    .AnyAsync(p => p.TenantId == tenantId && !p.Deleted && p.Code == code && p.Id != id);
                 if (codeDuplicated)
                 {
                     return Failure(409, 40901, "重复记录", "项目代码已存在");
@@ -233,15 +259,10 @@ public class ProjectsController : ApiControllerBase
         {
             if (!IsValidProjectStatus(request.Status))
             {
-                return Failure(400, 40001, "参数错误", "status 必须为 active, pending, completed 或 archived");
+                return Failure(400, 40001, "参数错误", "status 必须�?active, pending, completed �?archived");
             }
 
             project.Status = request.Status.Trim();
-        }
-
-        if (request.IsActive.HasValue)
-        {
-            project.IsActive = request.IsActive.Value;
         }
 
         if (request.PlannedStartDate != null)
@@ -267,7 +288,6 @@ public class ProjectsController : ApiControllerBase
             Name = project.Name,
             Code = project.Code,
             Status = project.Status,
-            IsActive = project.IsActive,
             PlannedStartDate = project.PlannedStartDate,
             PlannedEndDate = project.PlannedEndDate,
             Remark = project.Remark,
@@ -288,13 +308,12 @@ public class ProjectsController : ApiControllerBase
         }
 
         var project = await _dbContext.Projects
-            .FirstOrDefaultAsync(p => p.Id == id && p.TenantId == tenantId);
+            .FirstOrDefaultAsync(p => p.Id == id && p.TenantId == tenantId && !p.Deleted);
         if (project == null)
         {
             return Failure(404, 40401, "项目不存在");
         }
-
-        project.IsActive = false;
+        project.Deleted = true;
         await _dbContext.SaveChangesAsync();
 
         return Success(new { });

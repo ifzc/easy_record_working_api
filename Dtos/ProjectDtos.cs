@@ -6,7 +6,6 @@ public class ProjectDto
     public string Name { get; set; } = string.Empty;
     public string? Code { get; set; }
     public string Status { get; set; } = string.Empty;
-    public bool IsActive { get; set; }
     public DateOnly? PlannedStartDate { get; set; }
     public DateOnly? PlannedEndDate { get; set; }
     public string? Remark { get; set; }
@@ -29,7 +28,6 @@ public class UpdateProjectRequest
     public string? Name { get; set; }
     public string? Code { get; set; }
     public string? Status { get; set; }
-    public bool? IsActive { get; set; }
     public DateOnly? PlannedStartDate { get; set; }
     public DateOnly? PlannedEndDate { get; set; }
     public string? Remark { get; set; }

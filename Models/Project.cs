@@ -8,13 +8,13 @@ public class Project : TenantEntity
 
     public string Status { get; set; } = "active";
 
-    public bool IsActive { get; set; } = true;
-
     public DateOnly? PlannedStartDate { get; set; }
 
     public DateOnly? PlannedEndDate { get; set; }
 
     public string? Remark { get; set; }
+
+    public bool Deleted { get; set; }
 
     public Tenant? Tenant { get; set; }
 }

@@ -6,6 +6,7 @@ public class TimeEntryDto
     public Guid EmployeeId { get; set; }
     public string EmployeeName { get; set; } = string.Empty;
     public string EmployeeType { get; set; } = string.Empty;
+    public string? WorkType { get; set; }
     public DateOnly WorkDate { get; set; }
     public decimal NormalHours { get; set; }
     public decimal OvertimeHours { get; set; }

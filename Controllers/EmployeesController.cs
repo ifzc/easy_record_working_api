@@ -15,6 +15,7 @@ namespace EasyRecordWorkingApi.Controllers;
 public class EmployeesController : ApiControllerBase
 {
     private readonly AppDbContext _dbContext;
+    private const char TagSeparator = '|';
 
     public EmployeesController(AppDbContext dbContext, IUserContext userContext) : base(userContext)
     {
@@ -25,7 +26,8 @@ public class EmployeesController : ApiControllerBase
     public async Task<IActionResult> GetEmployees(
         [FromQuery] string? keyword,
         [FromQuery] string? type,
-        [FromQuery(Name = "is_active")] bool? isActive,
+        [FromQuery(Name = "work_type")] string? workType,
+        [FromQuery] string? tag,
         [FromQuery] int page = 1,
         [FromQuery(Name = "page_size")] int pageSize = 20,
         [FromQuery] string? sort = null)
@@ -49,7 +51,7 @@ public class EmployeesController : ApiControllerBase
         pageSize = Math.Min(pageSize, 200);
 
         var query = _dbContext.Employees.AsNoTracking()
-            .Where(e => e.TenantId == tenantId);
+            .Where(e => e.TenantId == tenantId && !e.Deleted);
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
@@ -61,9 +63,21 @@ public class EmployeesController : ApiControllerBase
             query = query.Where(e => e.Type == type);
         }
 
-        if (isActive.HasValue)
+        if (!string.IsNullOrWhiteSpace(workType))
         {
-            query = query.Where(e => e.IsActive == isActive.Value);
+            var trimmedWorkType = workType.Trim();
+            query = query.Where(e => e.WorkType != null && e.WorkType == trimmedWorkType);
+        }
+
+        if (!string.IsNullOrWhiteSpace(tag))
+        {
+            var trimmedTag = tag.Trim();
+            query = query.Where(e => e.Tags != null && (
+                e.Tags == trimmedTag ||
+                e.Tags.StartsWith($"{trimmedTag}{TagSeparator}") ||
+                e.Tags.EndsWith($"{TagSeparator}{trimmedTag}") ||
+                e.Tags.Contains($"{TagSeparator}{trimmedTag}{TagSeparator}")
+            ));
         }
 
         query = sort switch
@@ -82,8 +96,9 @@ public class EmployeesController : ApiControllerBase
                 Id = e.Id,
                 Name = e.Name,
                 Type = e.Type,
-                IsActive = e.IsActive,
+                WorkType = e.WorkType,
                 Remark = e.Remark,
+                Tags = ParseTags(e.Tags),
                 CreatedAt = e.CreatedAt,
                 UpdatedAt = e.UpdatedAt
             })
@@ -116,6 +131,7 @@ public class EmployeesController : ApiControllerBase
 
         var name = request.Name.Trim();
         var type = request.Type.Trim();
+        var workType = string.IsNullOrWhiteSpace(request.WorkType) ? null : request.WorkType.Trim();
 
         if (!IsValidEmployeeType(type))
         {
@@ -123,7 +139,7 @@ public class EmployeesController : ApiControllerBase
         }
 
         var duplicated = await _dbContext.Employees.AsNoTracking()
-            .AnyAsync(e => e.TenantId == tenantId && e.Name == name);
+            .AnyAsync(e => e.TenantId == tenantId && e.Name == name && !e.Deleted);
         if (duplicated)
         {
             return Failure(409, 40901, "重复记录");
@@ -135,8 +151,9 @@ public class EmployeesController : ApiControllerBase
             TenantId = tenantId,
             Name = name,
             Type = type,
-            IsActive = true,
-            Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim()
+            WorkType = workType,
+            Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim(),
+            Tags = NormalizeTagsString(request.Tags)
         };
 
         _dbContext.Employees.Add(employee);
@@ -147,8 +164,9 @@ public class EmployeesController : ApiControllerBase
             Id = employee.Id,
             Name = employee.Name,
             Type = employee.Type,
-            IsActive = employee.IsActive,
+            WorkType = employee.WorkType,
             Remark = employee.Remark,
+            Tags = ParseTags(employee.Tags),
             CreatedAt = employee.CreatedAt,
             UpdatedAt = employee.UpdatedAt
         };
@@ -166,7 +184,7 @@ public class EmployeesController : ApiControllerBase
         }
 
         var employee = await _dbContext.Employees
-            .FirstOrDefaultAsync(e => e.Id == id && e.TenantId == tenantId);
+            .FirstOrDefaultAsync(e => e.Id == id && e.TenantId == tenantId && !e.Deleted);
         if (employee == null)
         {
             return Failure(404, 40401, "员工不存在");
@@ -192,14 +210,19 @@ public class EmployeesController : ApiControllerBase
             employee.Type = request.Type.Trim();
         }
 
-        if (request.IsActive.HasValue)
+        if (request.WorkType != null)
         {
-            employee.IsActive = request.IsActive.Value;
+            employee.WorkType = string.IsNullOrWhiteSpace(request.WorkType) ? null : request.WorkType.Trim();
         }
 
         if (request.Remark != null)
         {
             employee.Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
+        }
+
+        if (request.Tags != null)
+        {
+            employee.Tags = NormalizeTagsString(request.Tags);
         }
 
         await _dbContext.SaveChangesAsync();
@@ -209,8 +232,9 @@ public class EmployeesController : ApiControllerBase
             Id = employee.Id,
             Name = employee.Name,
             Type = employee.Type,
-            IsActive = employee.IsActive,
+            WorkType = employee.WorkType,
             Remark = employee.Remark,
+            Tags = ParseTags(employee.Tags),
             CreatedAt = employee.CreatedAt,
             UpdatedAt = employee.UpdatedAt
         };
@@ -228,13 +252,13 @@ public class EmployeesController : ApiControllerBase
         }
 
         var employee = await _dbContext.Employees
-            .FirstOrDefaultAsync(e => e.Id == id && e.TenantId == tenantId);
+            .FirstOrDefaultAsync(e => e.Id == id && e.TenantId == tenantId && !e.Deleted);
         if (employee == null)
         {
             return Failure(404, 40401, "员工不存在");
         }
 
-        employee.IsActive = false;
+        employee.Deleted = true;
         await _dbContext.SaveChangesAsync();
 
         return Success(new { });
@@ -257,7 +281,7 @@ public class EmployeesController : ApiControllerBase
 
         var existingNames = new HashSet<string>(
             await _dbContext.Employees.AsNoTracking()
-                .Where(e => e.TenantId == tenantId)
+                .Where(e => e.TenantId == tenantId && !e.Deleted)
                 .Select(e => e.Name)
                 .ToListAsync(),
             StringComparer.OrdinalIgnoreCase);
@@ -298,11 +322,8 @@ public class EmployeesController : ApiControllerBase
 
             var name = parts[0].Trim();
             var type = parts[1].Trim();
-            var remarkStartIndex = 2;
-            if (parts.Length >= 3 && bool.TryParse(parts[2], out _))
-            {
-                remarkStartIndex = 3;
-            }
+            var workType = parts.Length >= 3 ? parts[2].Trim() : string.Empty;
+            var remarkStartIndex = parts.Length >= 3 ? 3 : 2;
 
             var remark = parts.Length > remarkStartIndex
                 ? string.Join(",", parts, remarkStartIndex, parts.Length - remarkStartIndex).Trim()
@@ -327,7 +348,7 @@ public class EmployeesController : ApiControllerBase
                 TenantId = tenantId,
                 Name = name,
                 Type = type,
-                IsActive = true,
+                WorkType = string.IsNullOrWhiteSpace(workType) ? null : workType,
                 Remark = string.IsNullOrWhiteSpace(remark) ? null : remark
             };
 
@@ -350,7 +371,7 @@ public class EmployeesController : ApiControllerBase
     }
 
     [HttpGet("export")]
-    public async Task<IActionResult> ExportEmployees([FromQuery] string? format, [FromQuery(Name = "is_active")] bool? isActive)
+    public async Task<IActionResult> ExportEmployees([FromQuery] string? format)
     {
         var tenantId = GetTenantId();
         if (tenantId == Guid.Empty)
@@ -364,24 +385,18 @@ public class EmployeesController : ApiControllerBase
         }
 
         var query = _dbContext.Employees.AsNoTracking()
-            .Where(e => e.TenantId == tenantId);
-
-        if (isActive.HasValue)
-        {
-            query = query.Where(e => e.IsActive == isActive.Value);
-        }
+            .Where(e => e.TenantId == tenantId && !e.Deleted);
 
         var employees = await query
             .OrderBy(e => e.Name)
             .ToListAsync();
 
         var builder = new StringBuilder();
-        builder.AppendLine("员工姓名,员工类型,是否有效,备注");
+        builder.AppendLine("员工姓名,员工类型,工种,备注");
         foreach (var employee in employees)
         {
-            var activeText = employee.IsActive ? "true" : "false";
             var remark = employee.Remark ?? string.Empty;
-            builder.AppendLine($"{employee.Name},{employee.Type},{activeText},{remark}");
+            builder.AppendLine($"{employee.Name},{employee.Type},{employee.WorkType ?? string.Empty},{remark}");
         }
 
         var bytes = Encoding.UTF8.GetBytes(builder.ToString());
@@ -393,5 +408,39 @@ public class EmployeesController : ApiControllerBase
     {
         return string.Equals(type, "正式工", StringComparison.OrdinalIgnoreCase)
                || string.Equals(type, "临时工", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? NormalizeTagsString(IEnumerable<string>? tags)
+    {
+        if (tags == null)
+        {
+            return null;
+        }
+
+        var normalized = tags
+            .Select(tag => tag?.Trim())
+            .Where(tag => !string.IsNullOrWhiteSpace(tag))
+            .Select(tag => tag!.Replace(TagSeparator, ' ').Replace(',', ' '))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return normalized.Count == 0 ? null : string.Join(TagSeparator, normalized);
+    }
+
+    private static List<string> ParseTags(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return new List<string>();
+        }
+
+        var parts = raw.Contains(TagSeparator)
+            ? raw.Split(TagSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        return parts
+            .Where(tag => !string.IsNullOrWhiteSpace(tag))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 }

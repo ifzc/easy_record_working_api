@@ -51,11 +51,11 @@ public class AppDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => e.Name);
-            entity.HasIndex(e => e.IsActive);
             entity.Property(e => e.Name).HasMaxLength(50).IsRequired();
             entity.Property(e => e.Type).HasMaxLength(10).IsRequired();
-            entity.Property(e => e.IsActive).HasDefaultValue(true).IsRequired();
+            entity.Property(e => e.WorkType).HasMaxLength(50);
             entity.Property(e => e.Remark).HasMaxLength(200);
+            entity.Property(e => e.Deleted).HasDefaultValue(false).IsRequired();
             entity.HasOne(e => e.Tenant)
                 .WithMany()
                 .HasForeignKey(e => e.TenantId)
@@ -74,6 +74,7 @@ public class AppDbContext : DbContext
             entity.Property(e => e.NormalHours).HasPrecision(5, 2).HasDefaultValue(8).IsRequired();
             entity.Property(e => e.OvertimeHours).HasPrecision(5, 2).HasDefaultValue(0).IsRequired();
             entity.Property(e => e.Remark).HasMaxLength(200);
+            entity.Property(e => e.Deleted).HasDefaultValue(false).IsRequired();
             entity.HasOne(e => e.Employee)
                 .WithMany()
                 .HasForeignKey(e => e.EmployeeId)
@@ -92,12 +93,11 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => e.Code);
             entity.HasIndex(e => e.Status);
-            entity.HasIndex(e => e.IsActive);
             entity.Property(e => e.Name).HasMaxLength(100).IsRequired();
             entity.Property(e => e.Code).HasMaxLength(50);
             entity.Property(e => e.Status).HasMaxLength(20).IsRequired().HasDefaultValue("active");
-            entity.Property(e => e.IsActive).HasDefaultValue(true).IsRequired();
             entity.Property(e => e.Remark).HasMaxLength(500);
+            entity.Property(e => e.Deleted).HasDefaultValue(false).IsRequired();
             entity.HasOne(e => e.Tenant)
                 .WithMany()
                 .HasForeignKey(e => e.TenantId)
@@ -121,7 +121,7 @@ public class AppDbContext : DbContext
 
     private void UpdateTimestamps()
     {
-        var now = DateTime.UtcNow;
+        var now = DateTime.Now;
         foreach (var entry in ChangeTracker.Entries<BaseEntity>())
         {
             if (entry.State == EntityState.Added)
