@@ -190,6 +190,134 @@ public class TimeEntriesController : ApiControllerBase
         return Success(dto);
     }
 
+    [HttpPost("batch")]
+    public async Task<IActionResult> BatchCreateTimeEntries([FromBody] BatchCreateTimeEntriesRequest request)
+    {
+        var tenantId = GetTenantId();
+        if (tenantId == Guid.Empty)
+        {
+            return Failure(401, 40103, "未登录");
+        }
+
+        if (request.EmployeeIds == null || request.EmployeeIds.Count == 0)
+        {
+            return Failure(400, 40001, "参数错误", "employee_ids 不能为空");
+        }
+
+        if (request.WorkDates == null || request.WorkDates.Count == 0)
+        {
+            return Failure(400, 40001, "参数错误", "work_dates 不能为空");
+        }
+
+        if (!IsValidHour(request.NormalHours) || !IsValidHour(request.OvertimeHours))
+        {
+            return Failure(400, 40001, "参数错误", "工时必须为非负且步进为 0.5");
+        }
+
+        var employeeIds = request.EmployeeIds.Distinct().ToList();
+        var employees = await _dbContext.Employees.AsNoTracking()
+            .Where(e => e.TenantId == tenantId && employeeIds.Contains(e.Id))
+            .ToListAsync();
+
+        var employeeMap = employees.ToDictionary(e => e.Id);
+        var workDates = request.WorkDates.Distinct().ToList();
+        var total = employeeIds.Count * workDates.Count;
+        var created = 0;
+        var skipped = 0;
+        var details = new List<BatchCreateTimeEntryDetail>();
+
+        foreach (var employeeId in employeeIds)
+        {
+            if (!employeeMap.TryGetValue(employeeId, out var employee))
+            {
+                foreach (var workDate in workDates)
+                {
+                    details.Add(new BatchCreateTimeEntryDetail
+                    {
+                        EmployeeId = employeeId,
+                        WorkDate = workDate,
+                        Status = "skipped",
+                        Reason = "员工不存在"
+                    });
+                    skipped++;
+                }
+                continue;
+            }
+
+            if (!employee.IsActive)
+            {
+                foreach (var workDate in workDates)
+                {
+                    details.Add(new BatchCreateTimeEntryDetail
+                    {
+                        EmployeeId = employeeId,
+                        WorkDate = workDate,
+                        Status = "skipped",
+                        Reason = "员工已停用"
+                    });
+                    skipped++;
+                }
+                continue;
+            }
+
+            foreach (var workDate in workDates)
+            {
+                var workDateTime = workDate.ToDateTime(TimeOnly.MinValue);
+                var exists = await _dbContext.TimeEntries
+                    .AnyAsync(t => t.TenantId == tenantId && t.EmployeeId == employeeId && t.WorkDate == workDateTime);
+
+                if (exists)
+                {
+                    details.Add(new BatchCreateTimeEntryDetail
+                    {
+                        EmployeeId = employeeId,
+                        WorkDate = workDate,
+                        Status = "skipped",
+                        Reason = "记录已存在"
+                    });
+                    skipped++;
+                    continue;
+                }
+
+                var timeEntry = new TimeEntry
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = tenantId,
+                    EmployeeId = employeeId,
+                    WorkDate = workDateTime,
+                    NormalHours = request.NormalHours,
+                    OvertimeHours = request.OvertimeHours,
+                    Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim()
+                };
+
+                _dbContext.TimeEntries.Add(timeEntry);
+                details.Add(new BatchCreateTimeEntryDetail
+                {
+                    EmployeeId = employeeId,
+                    WorkDate = workDate,
+                    Status = "created",
+                    Reason = null
+                });
+                created++;
+            }
+        }
+
+        if (created > 0)
+        {
+            await _dbContext.SaveChangesAsync();
+        }
+
+        var result = new BatchCreateTimeEntriesResult
+        {
+            Total = total,
+            Created = created,
+            Skipped = skipped,
+            Details = details
+        };
+
+        return Success(result);
+    }
+
     [HttpPut("{id:guid}")]
     public async Task<IActionResult> UpdateTimeEntry(Guid id, [FromBody] UpdateTimeEntryRequest request)
     {

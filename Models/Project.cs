@@ -1,0 +1,20 @@
+namespace EasyRecordWorkingApi.Models;
+
+public class Project : TenantEntity
+{
+    public string Name { get; set; } = string.Empty;
+
+    public string? Code { get; set; }
+
+    public string Status { get; set; } = "active";
+
+    public bool IsActive { get; set; } = true;
+
+    public DateOnly? PlannedStartDate { get; set; }
+
+    public DateOnly? PlannedEndDate { get; set; }
+
+    public string? Remark { get; set; }
+
+    public Tenant? Tenant { get; set; }
+}
