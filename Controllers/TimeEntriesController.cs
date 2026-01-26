@@ -15,6 +15,7 @@ namespace EasyRecordWorkingApi.Controllers;
 public class TimeEntriesController : ApiControllerBase
 {
     private readonly ISqlSugarClient _db;
+    private const char TagSeparator = '|';
 
     public TimeEntriesController(ISqlSugarClient db, IUserContext userContext) : base(userContext)
     {
@@ -804,6 +805,221 @@ public class TimeEntriesController : ApiControllerBase
                 EmployeeId = g.Key,
                 EmployeeName = employeeMap.TryGetValue(g.Key, out var name) ? name : "未知员工",
                 WorkUnits = g.Sum(x => x.NormalHours / 8m + x.OvertimeHours / 6m)
+            })
+            .OrderByDescending(x => x.WorkUnits)
+            .ToList();
+
+        return Success(data);
+    }
+
+    [HttpGet("summary/worktype-units")]
+    public async Task<IActionResult> GetWorkTypeWorkUnits(
+        [FromQuery] string? month,
+        [FromQuery] string? date,
+        [FromQuery(Name = "employee_id")] Guid? employeeId,
+        [FromQuery(Name = "employee_type")] string? employeeType,
+        [FromQuery(Name = "work_type")] string? workType,
+        [FromQuery(Name = "project_id")] Guid? projectId)
+    {
+        var tenantId = GetTenantId();
+        if (tenantId == Guid.Empty)
+        {
+            return Failure(401, 40103, "未登录");
+        }
+
+        DateTime startDate;
+        DateTime endDate;
+
+        if (!string.IsNullOrWhiteSpace(date))
+        {
+            if (!DateOnly.TryParseExact(date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
+            {
+                return Failure(400, 40001, "参数错误", "date 格式应为 YYYY-MM-DD");
+            }
+
+            startDate = parsedDate.ToDateTime(TimeOnly.MinValue);
+            endDate = parsedDate.ToDateTime(TimeOnly.MinValue);
+        }
+        else if (!string.IsNullOrWhiteSpace(month))
+        {
+            if (!DateTime.TryParseExact(month, "yyyy-MM", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedMonth))
+            {
+                return Failure(400, 40001, "参数错误", "month 格式应为 YYYY-MM");
+            }
+
+            startDate = new DateTime(parsedMonth.Year, parsedMonth.Month, 1);
+            endDate = startDate.AddMonths(1).AddDays(-1);
+        }
+        else
+        {
+            return Failure(400, 40001, "参数错误", "month 或 date 至少提供一个");
+        }
+
+        var query = _db.Queryable<TimeEntry>()
+            .Where(t => t.TenantId == tenantId && !t.Deleted && t.WorkDate >= startDate && t.WorkDate <= endDate);
+
+        if (employeeId.HasValue)
+        {
+            query = query.Where(t => t.EmployeeId == employeeId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(employeeType))
+        {
+            var empIds = await _db.Queryable<Employee>()
+                .Where(e => e.TenantId == tenantId && !e.Deleted && e.Type == employeeType)
+                .Select(e => e.Id)
+                .ToListAsync();
+            query = query.Where(t => empIds.Contains(t.EmployeeId));
+        }
+
+        if (!string.IsNullOrWhiteSpace(workType))
+        {
+            var trimmedWorkType = workType.Trim();
+            var empIds = await _db.Queryable<Employee>()
+                .Where(e => e.TenantId == tenantId && !e.Deleted && e.WorkType == trimmedWorkType)
+                .Select(e => e.Id)
+                .ToListAsync();
+            query = query.Where(t => empIds.Contains(t.EmployeeId));
+        }
+
+        if (projectId.HasValue)
+        {
+            query = query.Where(t => t.ProjectId == projectId.Value);
+        }
+
+        var timeEntries = await query.ToListAsync();
+        var employeeIds = timeEntries.Select(t => t.EmployeeId).Distinct().ToList();
+        var employees = await _db.Queryable<Employee>()
+            .Where(e => employeeIds.Contains(e.Id))
+            .ToListAsync();
+        var employeeWorkTypeMap = employees.ToDictionary(e => e.Id, e => e.WorkType ?? "未设置工种");
+
+        var data = timeEntries
+            .GroupBy(t => employeeWorkTypeMap.TryGetValue(t.EmployeeId, out var wt) ? wt : "未设置工种")
+            .Select(g => new WorkTypeWorkUnitSummaryDto
+            {
+                WorkType = g.Key,
+                WorkUnits = g.Sum(x => x.NormalHours / 8m + x.OvertimeHours / 6m)
+            })
+            .OrderByDescending(x => x.WorkUnits)
+            .ToList();
+
+        return Success(data);
+    }
+
+    [HttpGet("summary/tag-units")]
+    public async Task<IActionResult> GetTagWorkUnits(
+        [FromQuery] string? month,
+        [FromQuery] string? date,
+        [FromQuery(Name = "employee_id")] Guid? employeeId,
+        [FromQuery(Name = "employee_type")] string? employeeType,
+        [FromQuery(Name = "work_type")] string? workType,
+        [FromQuery(Name = "project_id")] Guid? projectId)
+    {
+        var tenantId = GetTenantId();
+        if (tenantId == Guid.Empty)
+        {
+            return Failure(401, 40103, "未登录");
+        }
+
+        DateTime startDate;
+        DateTime endDate;
+
+        if (!string.IsNullOrWhiteSpace(date))
+        {
+            if (!DateOnly.TryParseExact(date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
+            {
+                return Failure(400, 40001, "参数错误", "date 格式应为 YYYY-MM-DD");
+            }
+
+            startDate = parsedDate.ToDateTime(TimeOnly.MinValue);
+            endDate = parsedDate.ToDateTime(TimeOnly.MinValue);
+        }
+        else if (!string.IsNullOrWhiteSpace(month))
+        {
+            if (!DateTime.TryParseExact(month, "yyyy-MM", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedMonth))
+            {
+                return Failure(400, 40001, "参数错误", "month 格式应为 YYYY-MM");
+            }
+
+            startDate = new DateTime(parsedMonth.Year, parsedMonth.Month, 1);
+            endDate = startDate.AddMonths(1).AddDays(-1);
+        }
+        else
+        {
+            return Failure(400, 40001, "参数错误", "month 或 date 至少提供一个");
+        }
+
+        var query = _db.Queryable<TimeEntry>()
+            .Where(t => t.TenantId == tenantId && !t.Deleted && t.WorkDate >= startDate && t.WorkDate <= endDate);
+
+        if (employeeId.HasValue)
+        {
+            query = query.Where(t => t.EmployeeId == employeeId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(employeeType))
+        {
+            var empIds = await _db.Queryable<Employee>()
+                .Where(e => e.TenantId == tenantId && !e.Deleted && e.Type == employeeType)
+                .Select(e => e.Id)
+                .ToListAsync();
+            query = query.Where(t => empIds.Contains(t.EmployeeId));
+        }
+
+        if (!string.IsNullOrWhiteSpace(workType))
+        {
+            var trimmedWorkType = workType.Trim();
+            var empIds = await _db.Queryable<Employee>()
+                .Where(e => e.TenantId == tenantId && !e.Deleted && e.WorkType == trimmedWorkType)
+                .Select(e => e.Id)
+                .ToListAsync();
+            query = query.Where(t => empIds.Contains(t.EmployeeId));
+        }
+
+        if (projectId.HasValue)
+        {
+            query = query.Where(t => t.ProjectId == projectId.Value);
+        }
+
+        var timeEntries = await query.ToListAsync();
+        var employeeIds = timeEntries.Select(t => t.EmployeeId).Distinct().ToList();
+        var employees = await _db.Queryable<Employee>()
+            .Where(e => employeeIds.Contains(e.Id))
+            .ToListAsync();
+        var employeeTagsMap = employees.ToDictionary(e => e.Id, e => e.Tags);
+
+        // Expand tags: each employee may have multiple tags separated by comma
+        var tagWorkUnits = new Dictionary<string, decimal>();
+        foreach (var entry in timeEntries)
+        {
+            var workUnits = entry.NormalHours / 8m + entry.OvertimeHours / 6m;
+            if (!employeeTagsMap.TryGetValue(entry.EmployeeId, out var tags) || string.IsNullOrWhiteSpace(tags))
+            {
+                var key = "未设置标签";
+                tagWorkUnits[key] = tagWorkUnits.GetValueOrDefault(key) + workUnits;
+                continue;
+            }
+
+            var tagList = tags.Split(TagSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (tagList.Length == 0)
+            {
+                var key = "未设置标签";
+                tagWorkUnits[key] = tagWorkUnits.GetValueOrDefault(key) + workUnits;
+                continue;
+            }
+
+            foreach (var tag in tagList)
+            {
+                tagWorkUnits[tag] = tagWorkUnits.GetValueOrDefault(tag) + workUnits;
+            }
+        }
+
+        var data = tagWorkUnits
+            .Select(kv => new TagWorkUnitSummaryDto
+            {
+                Tag = kv.Key,
+                WorkUnits = kv.Value
             })
             .OrderByDescending(x => x.WorkUnits)
             .ToList();

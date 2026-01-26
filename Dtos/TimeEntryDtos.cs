@@ -87,3 +87,15 @@ public class EmployeeWorkUnitSummaryDto
     public string EmployeeName { get; set; } = string.Empty;
     public decimal WorkUnits { get; set; }
 }
+
+public class WorkTypeWorkUnitSummaryDto
+{
+    public string WorkType { get; set; } = string.Empty;
+    public decimal WorkUnits { get; set; }
+}
+
+public class TagWorkUnitSummaryDto
+{
+    public string Tag { get; set; } = string.Empty;
+    public decimal WorkUnits { get; set; }
+}
