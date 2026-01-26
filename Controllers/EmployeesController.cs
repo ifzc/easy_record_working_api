@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using EasyRecordWorkingApi.Contracts;
 using EasyRecordWorkingApi.Data;
 using EasyRecordWorkingApi.Dtos;
@@ -29,7 +29,7 @@ public class EmployeesController : ApiControllerBase
         [FromQuery(Name = "work_type")] string? workType,
         [FromQuery] string? tag,
         [FromQuery] int page = 1,
-        [FromQuery(Name = "page_size")] int pageSize = 20,
+        [FromQuery(Name = "page_size")] int pageSize = 15,
         [FromQuery] string? sort = null)
     {
         var tenantId = GetTenantId();
@@ -45,7 +45,7 @@ public class EmployeesController : ApiControllerBase
 
         if (pageSize <= 0)
         {
-            pageSize = 20;
+            pageSize = 15;
         }
 
         pageSize = Math.Min(pageSize, 200);
@@ -97,6 +97,8 @@ public class EmployeesController : ApiControllerBase
                 Name = e.Name,
                 Type = e.Type,
                 WorkType = e.WorkType,
+                Phone = e.Phone,
+                IdCardNumber = e.IdCardNumber,
                 Remark = e.Remark,
                 Tags = ParseTags(e.Tags),
                 CreatedAt = e.CreatedAt,
@@ -132,6 +134,8 @@ public class EmployeesController : ApiControllerBase
         var name = request.Name.Trim();
         var type = request.Type.Trim();
         var workType = string.IsNullOrWhiteSpace(request.WorkType) ? null : request.WorkType.Trim();
+        var phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim();
+        var idCardNumber = string.IsNullOrWhiteSpace(request.IdCardNumber) ? null : request.IdCardNumber.Trim();
 
         if (!IsValidEmployeeType(type))
         {
@@ -152,6 +156,8 @@ public class EmployeesController : ApiControllerBase
             Name = name,
             Type = type,
             WorkType = workType,
+            Phone = phone,
+            IdCardNumber = idCardNumber,
             Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim(),
             Tags = NormalizeTagsString(request.Tags)
         };
@@ -165,6 +171,8 @@ public class EmployeesController : ApiControllerBase
             Name = employee.Name,
             Type = employee.Type,
             WorkType = employee.WorkType,
+            Phone = employee.Phone,
+            IdCardNumber = employee.IdCardNumber,
             Remark = employee.Remark,
             Tags = ParseTags(employee.Tags),
             CreatedAt = employee.CreatedAt,
@@ -215,6 +223,16 @@ public class EmployeesController : ApiControllerBase
             employee.WorkType = string.IsNullOrWhiteSpace(request.WorkType) ? null : request.WorkType.Trim();
         }
 
+        if (request.Phone != null)
+        {
+            employee.Phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim();
+        }
+
+        if (request.IdCardNumber != null)
+        {
+            employee.IdCardNumber = string.IsNullOrWhiteSpace(request.IdCardNumber) ? null : request.IdCardNumber.Trim();
+        }
+
         if (request.Remark != null)
         {
             employee.Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
@@ -233,6 +251,8 @@ public class EmployeesController : ApiControllerBase
             Name = employee.Name,
             Type = employee.Type,
             WorkType = employee.WorkType,
+            Phone = employee.Phone,
+            IdCardNumber = employee.IdCardNumber,
             Remark = employee.Remark,
             Tags = ParseTags(employee.Tags),
             CreatedAt = employee.CreatedAt,
@@ -323,7 +343,9 @@ public class EmployeesController : ApiControllerBase
             var name = parts[0].Trim();
             var type = parts[1].Trim();
             var workType = parts.Length >= 3 ? parts[2].Trim() : string.Empty;
-            var remarkStartIndex = parts.Length >= 3 ? 3 : 2;
+            var phone = parts.Length >= 4 ? parts[3].Trim() : string.Empty;
+            var idCardNumber = parts.Length >= 5 ? parts[4].Trim() : string.Empty;
+            var remarkStartIndex = parts.Length >= 5 ? 5 : parts.Length >= 4 ? 4 : parts.Length >= 3 ? 3 : 2;
 
             var remark = parts.Length > remarkStartIndex
                 ? string.Join(",", parts, remarkStartIndex, parts.Length - remarkStartIndex).Trim()
@@ -349,6 +371,8 @@ public class EmployeesController : ApiControllerBase
                 Name = name,
                 Type = type,
                 WorkType = string.IsNullOrWhiteSpace(workType) ? null : workType,
+                Phone = string.IsNullOrWhiteSpace(phone) ? null : phone,
+                IdCardNumber = string.IsNullOrWhiteSpace(idCardNumber) ? null : idCardNumber,
                 Remark = string.IsNullOrWhiteSpace(remark) ? null : remark
             };
 
@@ -392,11 +416,13 @@ public class EmployeesController : ApiControllerBase
             .ToListAsync();
 
         var builder = new StringBuilder();
-        builder.AppendLine("员工姓名,员工类型,工种,备注");
+        builder.AppendLine("员工姓名,员工类型,工种,手机号,身份证号,备注");
         foreach (var employee in employees)
         {
             var remark = employee.Remark ?? string.Empty;
-            builder.AppendLine($"{employee.Name},{employee.Type},{employee.WorkType ?? string.Empty},{remark}");
+            var phone = employee.Phone ?? string.Empty;
+            var idCardNumber = employee.IdCardNumber ?? string.Empty;
+            builder.AppendLine($"{employee.Name},{employee.Type},{employee.WorkType ?? string.Empty},{phone},{idCardNumber},{remark}");
         }
 
         var bytes = Encoding.UTF8.GetBytes(builder.ToString());
@@ -444,3 +470,12 @@ public class EmployeesController : ApiControllerBase
             .ToList();
     }
 }
+
+
+
+
+
+
+
+
+

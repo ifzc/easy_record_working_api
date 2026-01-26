@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using EasyRecordWorkingApi.Contracts;
 using EasyRecordWorkingApi.Data;
 using EasyRecordWorkingApi.Dtos;
@@ -26,7 +26,7 @@ public class ProjectsController : ApiControllerBase
         [FromQuery] string? keyword,
         [FromQuery] string? status,
         [FromQuery] int page = 1,
-        [FromQuery(Name = "page_size")] int pageSize = 20,
+        [FromQuery(Name = "page_size")] int pageSize = 15,
         [FromQuery] string? sort = null)
     {
         var tenantId = GetTenantId();
@@ -42,7 +42,7 @@ public class ProjectsController : ApiControllerBase
 
         if (pageSize <= 0)
         {
-            pageSize = 20;
+            pageSize = 15;
         }
 
         pageSize = Math.Min(pageSize, 200);
@@ -116,7 +116,7 @@ public class ProjectsController : ApiControllerBase
 
         if (!IsValidProjectStatus(status))
         {
-            return Failure(400, 40001, "参数错误", "status 必须�?active, pending, completed �?archived");
+            return Failure(400, 40001, "参数错误", "status 必须为 active, pending, completed 或 archived");
         }
 
         var existingProject = await _dbContext.Projects
@@ -125,7 +125,7 @@ public class ProjectsController : ApiControllerBase
         {
             if (!existingProject.Deleted)
             {
-                return Failure(409, 40901, "�ظ���¼", "��Ŀ�����Ѵ���");
+                return Failure(409, 40901, "重复记录", "项目名称已存在");
             }
 
             if (!string.IsNullOrWhiteSpace(code))
@@ -134,7 +134,7 @@ public class ProjectsController : ApiControllerBase
                     .AnyAsync(p => p.TenantId == tenantId && !p.Deleted && p.Code == code && p.Id != existingProject.Id);
                 if (codeDuplicated)
                 {
-                    return Failure(409, 40901, "�ظ���¼", "��Ŀ�����Ѵ���");
+                    return Failure(409, 40901, "重复记录", "项目名称已存在");
                 }
             }
 
@@ -259,7 +259,7 @@ public class ProjectsController : ApiControllerBase
         {
             if (!IsValidProjectStatus(request.Status))
             {
-                return Failure(400, 40001, "参数错误", "status 必须�?active, pending, completed �?archived");
+                return Failure(400, 40001, "参数错误", "status 必须为 active, pending, completed 或 archived");
             }
 
             project.Status = request.Status.Trim();
@@ -327,3 +327,4 @@ public class ProjectsController : ApiControllerBase
                || string.Equals(status, "archived", StringComparison.OrdinalIgnoreCase);
     }
 }
+

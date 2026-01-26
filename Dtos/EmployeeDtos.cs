@@ -6,6 +6,8 @@ public class EmployeeDto
     public string Name { get; set; } = string.Empty;
     public string Type { get; set; } = string.Empty;
     public string? WorkType { get; set; }
+    public string? Phone { get; set; }
+    public string? IdCardNumber { get; set; }
     public string? Remark { get; set; }
     public List<string> Tags { get; set; } = new();
     public DateTime CreatedAt { get; set; }
@@ -17,6 +19,8 @@ public class CreateEmployeeRequest
     public string Name { get; set; } = string.Empty;
     public string Type { get; set; } = string.Empty;
     public string? WorkType { get; set; }
+    public string? Phone { get; set; }
+    public string? IdCardNumber { get; set; }
     public string? Remark { get; set; }
     public List<string>? Tags { get; set; }
 }
@@ -26,6 +30,8 @@ public class UpdateEmployeeRequest
     public string? Name { get; set; }
     public string? Type { get; set; }
     public string? WorkType { get; set; }
+    public string? Phone { get; set; }
+    public string? IdCardNumber { get; set; }
     public string? Remark { get; set; }
     public List<string>? Tags { get; set; }
 }

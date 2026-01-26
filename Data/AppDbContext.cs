@@ -54,6 +54,8 @@ public class AppDbContext : DbContext
             entity.Property(e => e.Name).HasMaxLength(50).IsRequired();
             entity.Property(e => e.Type).HasMaxLength(10).IsRequired();
             entity.Property(e => e.WorkType).HasMaxLength(50);
+            entity.Property(e => e.Phone).HasMaxLength(20);
+            entity.Property(e => e.IdCardNumber).HasMaxLength(30);
             entity.Property(e => e.Remark).HasMaxLength(200);
             entity.Property(e => e.Deleted).HasDefaultValue(false).IsRequired();
             entity.HasOne(e => e.Tenant)
@@ -68,6 +70,7 @@ public class AppDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => new { e.TenantId, e.WorkDate });
             entity.HasIndex(e => e.EmployeeId);
+            entity.HasIndex(e => e.ProjectId);
             entity.HasIndex(e => new { e.WorkDate, e.EmployeeId });
             entity.HasIndex(e => new { e.TenantId, e.EmployeeId, e.WorkDate }).IsUnique();
             entity.Property(e => e.WorkDate).HasColumnType("date").IsRequired();
@@ -78,6 +81,10 @@ public class AppDbContext : DbContext
             entity.HasOne(e => e.Employee)
                 .WithMany()
                 .HasForeignKey(e => e.EmployeeId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Project)
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.Tenant)
                 .WithMany()

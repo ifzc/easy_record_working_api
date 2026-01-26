@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using EasyRecordWorkingApi.Contracts;
 using EasyRecordWorkingApi.Data;
 using EasyRecordWorkingApi.Dtos;
@@ -25,10 +25,13 @@ public class TimeEntriesController : ApiControllerBase
     public async Task<IActionResult> GetTimeEntries(
         [FromQuery] string? date,
         [FromQuery] string? keyword,
+        [FromQuery(Name = "employee_id")] Guid? employeeId,
         [FromQuery(Name = "employee_type")] string? employeeType,
+        [FromQuery(Name = "work_type")] string? workType,
+        [FromQuery(Name = "project_id")] Guid? projectId,
         [FromQuery] string? sort,
         [FromQuery] int page = 1,
-        [FromQuery(Name = "page_size")] int pageSize = 20)
+        [FromQuery(Name = "page_size")] int pageSize = 15)
     {
         var tenantId = GetTenantId();
         if (tenantId == Guid.Empty)
@@ -53,7 +56,7 @@ public class TimeEntriesController : ApiControllerBase
 
         if (pageSize <= 0)
         {
-            pageSize = 20;
+            pageSize = 15;
         }
 
         pageSize = Math.Min(pageSize, 200);
@@ -61,7 +64,18 @@ public class TimeEntriesController : ApiControllerBase
         var workDateValue = workDate.ToDateTime(TimeOnly.MinValue);
         var query = _dbContext.TimeEntries.AsNoTracking()
             .Include(t => t.Employee)
+            .Include(t => t.Project)
             .Where(t => t.TenantId == tenantId && !t.Deleted && t.WorkDate == workDateValue);
+
+        if (employeeId.HasValue)
+        {
+            query = query.Where(t => t.EmployeeId == employeeId.Value);
+        }
+
+        if (projectId.HasValue)
+        {
+            query = query.Where(t => t.ProjectId == projectId.Value);
+        }
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
@@ -71,6 +85,12 @@ public class TimeEntriesController : ApiControllerBase
         if (!string.IsNullOrWhiteSpace(employeeType))
         {
             query = query.Where(t => t.Employee != null && t.Employee.Type == employeeType);
+        }
+
+        if (!string.IsNullOrWhiteSpace(workType))
+        {
+            var trimmedWorkType = workType.Trim();
+            query = query.Where(t => t.Employee != null && t.Employee.WorkType == trimmedWorkType);
         }
 
         query = sort switch
@@ -91,6 +111,8 @@ public class TimeEntriesController : ApiControllerBase
                 EmployeeName = t.Employee != null ? t.Employee.Name : string.Empty,
                 EmployeeType = t.Employee != null ? t.Employee.Type : string.Empty,
                 EmployeeWorkType = t.Employee != null ? t.Employee.WorkType : string.Empty,
+                t.ProjectId,
+                ProjectName = t.Project != null ? t.Project.Name : string.Empty,
                 t.WorkDate,
                 t.NormalHours,
                 t.OvertimeHours,
@@ -106,6 +128,8 @@ public class TimeEntriesController : ApiControllerBase
             EmployeeName = t.EmployeeName,
             EmployeeType = t.EmployeeType,
             WorkType = t.EmployeeWorkType,
+            ProjectId = t.ProjectId,
+            ProjectName = string.IsNullOrWhiteSpace(t.ProjectName) ? null : t.ProjectName,
             WorkDate = DateOnly.FromDateTime(t.WorkDate),
             NormalHours = t.NormalHours,
             OvertimeHours = t.OvertimeHours,
@@ -137,7 +161,7 @@ public class TimeEntriesController : ApiControllerBase
 
         if (!IsValidHour(request.NormalHours) || !IsValidHour(request.OvertimeHours))
         {
-            return Failure(400, 40001, "参数错误", "工时必须为非负且步进�?0.5");
+            return Failure(400, 40001, "参数错误", "工时必须为非负且步进为 0.5");
         }
 
         var employee = await _dbContext.Employees.AsNoTracking()
@@ -147,6 +171,12 @@ public class TimeEntriesController : ApiControllerBase
             return Failure(404, 40401, "员工不存在");
         }
 
+        var project = await GetProjectAsync(request.ProjectId, tenantId);
+        if (request.ProjectId.HasValue && project == null)
+        {
+            return Failure(404, 40401, "项目不存在");
+        }
+
         var workDate = request.WorkDate.ToDateTime(TimeOnly.MinValue);
         var existing = await _dbContext.TimeEntries
             .FirstOrDefaultAsync(t => t.TenantId == tenantId && t.EmployeeId == request.EmployeeId && t.WorkDate == workDate);
@@ -154,13 +184,14 @@ public class TimeEntriesController : ApiControllerBase
         {
             if (!existing.Deleted)
             {
-                return Failure(409, 40901, "�ظ���¼");
+                return Failure(409, 40901, "重复记录");
             }
 
             existing.Deleted = false;
             existing.NormalHours = request.NormalHours;
             existing.OvertimeHours = request.OvertimeHours;
             existing.Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
+            existing.ProjectId = request.ProjectId;
             await _dbContext.SaveChangesAsync();
 
             var restoredDto = new TimeEntryDto
@@ -169,7 +200,9 @@ public class TimeEntriesController : ApiControllerBase
                 EmployeeId = existing.EmployeeId,
                 EmployeeName = employee.Name,
                 EmployeeType = employee.Type,
-            WorkType = employee.WorkType,
+                WorkType = employee.WorkType,
+                ProjectId = existing.ProjectId,
+                ProjectName = project?.Name,
                 WorkDate = DateOnly.FromDateTime(existing.WorkDate),
                 NormalHours = existing.NormalHours,
                 OvertimeHours = existing.OvertimeHours,
@@ -186,6 +219,7 @@ public class TimeEntriesController : ApiControllerBase
             Id = Guid.NewGuid(),
             TenantId = tenantId,
             EmployeeId = request.EmployeeId,
+            ProjectId = request.ProjectId,
             WorkDate = workDate,
             NormalHours = request.NormalHours,
             OvertimeHours = request.OvertimeHours,
@@ -202,6 +236,8 @@ public class TimeEntriesController : ApiControllerBase
             EmployeeName = employee.Name,
             EmployeeType = employee.Type,
             WorkType = employee.WorkType,
+            ProjectId = timeEntry.ProjectId,
+            ProjectName = project?.Name,
             WorkDate = DateOnly.FromDateTime(timeEntry.WorkDate),
             NormalHours = timeEntry.NormalHours,
             OvertimeHours = timeEntry.OvertimeHours,
@@ -235,7 +271,13 @@ public class TimeEntriesController : ApiControllerBase
 
         if (!IsValidHour(request.NormalHours) || !IsValidHour(request.OvertimeHours))
         {
-            return Failure(400, 40001, "参数错误", "工时必须为非负且步进�?0.5");
+            return Failure(400, 40001, "参数错误", "工时必须为非负且步进为 0.5");
+        }
+
+        var project = await GetProjectAsync(request.ProjectId, tenantId);
+        if (request.ProjectId.HasValue && project == null)
+        {
+            return Failure(404, 40401, "项目不存在");
         }
 
         var employeeIds = request.EmployeeIds.Distinct().ToList();
@@ -282,7 +324,7 @@ public class TimeEntriesController : ApiControllerBase
                             EmployeeId = employeeId,
                             WorkDate = workDate,
                             Status = "skipped",
-                            Reason = "��¼�Ѵ���"
+                            Reason = "记录已存在"
                         });
                         skipped++;
                         continue;
@@ -292,6 +334,7 @@ public class TimeEntriesController : ApiControllerBase
                     existing.NormalHours = request.NormalHours;
                     existing.OvertimeHours = request.OvertimeHours;
                     existing.Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
+                    existing.ProjectId = request.ProjectId;
                     details.Add(new BatchCreateTimeEntryDetail
                     {
                         EmployeeId = employeeId,
@@ -307,6 +350,7 @@ public class TimeEntriesController : ApiControllerBase
                     Id = Guid.NewGuid(),
                     TenantId = tenantId,
                     EmployeeId = employeeId,
+                    ProjectId = request.ProjectId,
                     WorkDate = workDateTime,
                     NormalHours = request.NormalHours,
                     OvertimeHours = request.OvertimeHours,
@@ -369,6 +413,12 @@ public class TimeEntriesController : ApiControllerBase
             return Failure(404, 40401, "员工不存在");
         }
 
+        var project = await GetProjectAsync(request.ProjectId, tenantId);
+        if (request.ProjectId.HasValue && project == null)
+        {
+            return Failure(404, 40401, "项目不存在");
+        }
+
         var workDate = request.WorkDate.ToDateTime(TimeOnly.MinValue);
         var duplicateExists = await _dbContext.TimeEntries
             .AnyAsync(t => t.Id != id && t.TenantId == tenantId && !t.Deleted && t.EmployeeId == request.EmployeeId && t.WorkDate == workDate);
@@ -378,6 +428,7 @@ public class TimeEntriesController : ApiControllerBase
         }
 
         timeEntry.EmployeeId = request.EmployeeId;
+        timeEntry.ProjectId = request.ProjectId;
         timeEntry.WorkDate = workDate;
         timeEntry.NormalHours = request.NormalHours;
         timeEntry.OvertimeHours = request.OvertimeHours;
@@ -395,6 +446,8 @@ public class TimeEntriesController : ApiControllerBase
             EmployeeName = employee.Name,
             EmployeeType = employee.Type,
             WorkType = employee.WorkType,
+            ProjectId = timeEntry.ProjectId,
+            ProjectName = project?.Name,
             WorkDate = DateOnly.FromDateTime(timeEntry.WorkDate),
             NormalHours = timeEntry.NormalHours,
             OvertimeHours = timeEntry.OvertimeHours,
@@ -434,7 +487,9 @@ public class TimeEntriesController : ApiControllerBase
         [FromQuery] string? month,
         [FromQuery] string? date,
         [FromQuery(Name = "employee_id")] Guid? employeeId,
-        [FromQuery(Name = "employee_type")] string? employeeType)
+        [FromQuery(Name = "employee_type")] string? employeeType,
+        [FromQuery(Name = "work_type")] string? workType,
+        [FromQuery(Name = "project_id")] Guid? projectId)
     {
         var tenantId = GetTenantId();
         if (tenantId == Guid.Empty)
@@ -481,6 +536,17 @@ public class TimeEntriesController : ApiControllerBase
         if (!string.IsNullOrWhiteSpace(employeeType))
         {
             query = query.Where(t => t.Employee != null && t.Employee.Type == employeeType);
+        }
+
+        if (!string.IsNullOrWhiteSpace(workType))
+        {
+            var trimmedWorkType = workType.Trim();
+            query = query.Where(t => t.Employee != null && t.Employee.WorkType == trimmedWorkType);
+        }
+
+        if (projectId.HasValue)
+        {
+            query = query.Where(t => t.ProjectId == projectId.Value);
         }
 
         var rawSummary = await query
@@ -531,6 +597,187 @@ public class TimeEntriesController : ApiControllerBase
         return Success(data);
     }
 
+    [HttpGet("summary/project-units")]
+    public async Task<IActionResult> GetProjectWorkUnits(
+        [FromQuery] string? month,
+        [FromQuery] string? date,
+        [FromQuery(Name = "employee_id")] Guid? employeeId,
+        [FromQuery(Name = "employee_type")] string? employeeType,
+        [FromQuery(Name = "work_type")] string? workType,
+        [FromQuery(Name = "project_id")] Guid? projectId)
+    {
+        var tenantId = GetTenantId();
+        if (tenantId == Guid.Empty)
+        {
+            return Failure(401, 40103, "未登录");
+        }
+
+        DateTime startDate;
+        DateTime endDate;
+
+        if (!string.IsNullOrWhiteSpace(date))
+        {
+            if (!DateOnly.TryParseExact(date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
+            {
+                return Failure(400, 40001, "参数错误", "date 格式应为 YYYY-MM-DD");
+            }
+
+            startDate = parsedDate.ToDateTime(TimeOnly.MinValue);
+            endDate = parsedDate.ToDateTime(TimeOnly.MinValue);
+        }
+        else if (!string.IsNullOrWhiteSpace(month))
+        {
+            if (!DateTime.TryParseExact(month, "yyyy-MM", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedMonth))
+            {
+                return Failure(400, 40001, "参数错误", "month 格式应为 YYYY-MM");
+            }
+
+            startDate = new DateTime(parsedMonth.Year, parsedMonth.Month, 1);
+            endDate = startDate.AddMonths(1).AddDays(-1);
+        }
+        else
+        {
+            return Failure(400, 40001, "参数错误", "month 或 date 至少提供一个");
+        }
+
+        var query = _dbContext.TimeEntries.AsNoTracking()
+            .Where(t => t.TenantId == tenantId && !t.Deleted && t.WorkDate >= startDate && t.WorkDate <= endDate);
+
+        if (employeeId.HasValue)
+        {
+            query = query.Where(t => t.EmployeeId == employeeId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(employeeType))
+        {
+            query = query.Where(t => t.Employee != null && t.Employee.Type == employeeType);
+        }
+
+        if (!string.IsNullOrWhiteSpace(workType))
+        {
+            var trimmedWorkType = workType.Trim();
+            query = query.Where(t => t.Employee != null && t.Employee.WorkType == trimmedWorkType);
+        }
+
+        if (projectId.HasValue)
+        {
+            query = query.Where(t => t.ProjectId == projectId.Value);
+        }
+
+        var data = await query
+            .GroupBy(t => new
+            {
+                t.ProjectId,
+                ProjectName = t.Project != null ? t.Project.Name : "未关联项目"
+            })
+            .Select(g => new ProjectWorkUnitSummaryDto
+            {
+                ProjectId = g.Key.ProjectId,
+                ProjectName = g.Key.ProjectName,
+                WorkUnits = g.Sum(x => x.NormalHours / 8m + x.OvertimeHours / 6m)
+            })
+            .OrderByDescending(x => x.WorkUnits)
+            .ToListAsync();
+
+        return Success(data);
+    }
+
+    [HttpGet("summary/employee-units")]
+    public async Task<IActionResult> GetEmployeeWorkUnits(
+        [FromQuery] string? month,
+        [FromQuery] string? date,
+        [FromQuery(Name = "employee_id")] Guid? employeeId,
+        [FromQuery(Name = "employee_type")] string? employeeType,
+        [FromQuery(Name = "work_type")] string? workType,
+        [FromQuery(Name = "project_id")] Guid? projectId)
+    {
+        var tenantId = GetTenantId();
+        if (tenantId == Guid.Empty)
+        {
+            return Failure(401, 40103, "未登录");
+        }
+
+        DateTime startDate;
+        DateTime endDate;
+
+        if (!string.IsNullOrWhiteSpace(date))
+        {
+            if (!DateOnly.TryParseExact(date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
+            {
+                return Failure(400, 40001, "参数错误", "date 格式应为 YYYY-MM-DD");
+            }
+
+            startDate = parsedDate.ToDateTime(TimeOnly.MinValue);
+            endDate = parsedDate.ToDateTime(TimeOnly.MinValue);
+        }
+        else if (!string.IsNullOrWhiteSpace(month))
+        {
+            if (!DateTime.TryParseExact(month, "yyyy-MM", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedMonth))
+            {
+                return Failure(400, 40001, "参数错误", "month 格式应为 YYYY-MM");
+            }
+
+            startDate = new DateTime(parsedMonth.Year, parsedMonth.Month, 1);
+            endDate = startDate.AddMonths(1).AddDays(-1);
+        }
+        else
+        {
+            return Failure(400, 40001, "参数错误", "month 或 date 至少提供一个");
+        }
+
+        var query = _dbContext.TimeEntries.AsNoTracking()
+            .Where(t => t.TenantId == tenantId && !t.Deleted && t.WorkDate >= startDate && t.WorkDate <= endDate);
+
+        if (employeeId.HasValue)
+        {
+            query = query.Where(t => t.EmployeeId == employeeId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(employeeType))
+        {
+            query = query.Where(t => t.Employee != null && t.Employee.Type == employeeType);
+        }
+
+        if (!string.IsNullOrWhiteSpace(workType))
+        {
+            var trimmedWorkType = workType.Trim();
+            query = query.Where(t => t.Employee != null && t.Employee.WorkType == trimmedWorkType);
+        }
+
+        if (projectId.HasValue)
+        {
+            query = query.Where(t => t.ProjectId == projectId.Value);
+        }
+
+        var data = await query
+            .GroupBy(t => new
+            {
+                t.EmployeeId,
+                EmployeeName = t.Employee != null ? t.Employee.Name : string.Empty
+            })
+            .Select(g => new EmployeeWorkUnitSummaryDto
+            {
+                EmployeeId = g.Key.EmployeeId,
+                EmployeeName = g.Key.EmployeeName,
+                WorkUnits = g.Sum(x => x.NormalHours / 8m + x.OvertimeHours / 6m)
+            })
+            .OrderByDescending(x => x.WorkUnits)
+            .ToListAsync();
+
+        return Success(data);
+    }
+
+    private async Task<Project?> GetProjectAsync(Guid? projectId, Guid tenantId)
+    {
+        if (!projectId.HasValue || projectId.Value == Guid.Empty)
+        {
+            return null;
+        }
+
+        return await _dbContext.Projects.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == projectId.Value && p.TenantId == tenantId && !p.Deleted);
+    }
+
     private static bool IsValidHour(decimal value)
     {
         if (value < 0)
@@ -542,4 +789,24 @@ public class TimeEntriesController : ApiControllerBase
         return decimal.Truncate(scaled) == scaled;
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

@@ -7,6 +7,8 @@ public class TimeEntryDto
     public string EmployeeName { get; set; } = string.Empty;
     public string EmployeeType { get; set; } = string.Empty;
     public string? WorkType { get; set; }
+    public Guid? ProjectId { get; set; }
+    public string? ProjectName { get; set; }
     public DateOnly WorkDate { get; set; }
     public decimal NormalHours { get; set; }
     public decimal OvertimeHours { get; set; }
@@ -19,6 +21,7 @@ public class TimeEntryDto
 public class CreateTimeEntryRequest
 {
     public Guid EmployeeId { get; set; }
+    public Guid? ProjectId { get; set; }
     public DateOnly WorkDate { get; set; }
     public decimal NormalHours { get; set; } = 8;
     public decimal OvertimeHours { get; set; }
@@ -28,6 +31,7 @@ public class CreateTimeEntryRequest
 public class UpdateTimeEntryRequest
 {
     public Guid EmployeeId { get; set; }
+    public Guid? ProjectId { get; set; }
     public DateOnly WorkDate { get; set; }
     public decimal NormalHours { get; set; }
     public decimal OvertimeHours { get; set; }
@@ -48,6 +52,7 @@ public class BatchCreateTimeEntriesRequest
 {
     public List<Guid> EmployeeIds { get; set; } = new();
     public List<DateOnly> WorkDates { get; set; } = new();
+    public Guid? ProjectId { get; set; }
     public decimal NormalHours { get; set; } = 8;
     public decimal OvertimeHours { get; set; }
     public string? Remark { get; set; }
@@ -67,4 +72,18 @@ public class BatchCreateTimeEntryDetail
     public DateOnly WorkDate { get; set; }
     public string Status { get; set; } = string.Empty;
     public string? Reason { get; set; }
+}
+
+public class ProjectWorkUnitSummaryDto
+{
+    public Guid? ProjectId { get; set; }
+    public string ProjectName { get; set; } = string.Empty;
+    public decimal WorkUnits { get; set; }
+}
+
+public class EmployeeWorkUnitSummaryDto
+{
+    public Guid EmployeeId { get; set; }
+    public string EmployeeName { get; set; } = string.Empty;
+    public decimal WorkUnits { get; set; }
 }
