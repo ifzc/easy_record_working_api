@@ -1,4 +1,3 @@
-﻿using System.Text;
 using EasyRecordWorkingApi.Contracts;
 using EasyRecordWorkingApi.Data;
 using EasyRecordWorkingApi.Dtos;
@@ -6,7 +5,7 @@ using EasyRecordWorkingApi.Models;
 using EasyRecordWorkingApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using SqlSugar;
 
 namespace EasyRecordWorkingApi.Controllers;
 
@@ -14,11 +13,11 @@ namespace EasyRecordWorkingApi.Controllers;
 [Route("api/projects")]
 public class ProjectsController : ApiControllerBase
 {
-    private readonly AppDbContext _dbContext;
+    private readonly ISqlSugarClient _db;
 
-    public ProjectsController(AppDbContext dbContext, IUserContext userContext) : base(userContext)
+    public ProjectsController(ISqlSugarClient db, IUserContext userContext) : base(userContext)
     {
-        _dbContext = dbContext;
+        _db = db;
     }
 
     [HttpGet]
@@ -47,7 +46,7 @@ public class ProjectsController : ApiControllerBase
 
         pageSize = Math.Min(pageSize, 200);
 
-        var query = _dbContext.Projects.AsNoTracking()
+        var query = _db.Queryable<Project>()
             .Where(p => p.TenantId == tenantId && !p.Deleted);
 
         if (!string.IsNullOrWhiteSpace(keyword))
@@ -119,8 +118,8 @@ public class ProjectsController : ApiControllerBase
             return Failure(400, 40001, "参数错误", "status 必须为 active, pending, completed 或 archived");
         }
 
-        var existingProject = await _dbContext.Projects
-            .FirstOrDefaultAsync(p => p.TenantId == tenantId && p.Name == name);
+        var existingProject = await _db.Queryable<Project>()
+            .FirstAsync(p => p.TenantId == tenantId && p.Name == name);
         if (existingProject != null)
         {
             if (!existingProject.Deleted)
@@ -130,7 +129,7 @@ public class ProjectsController : ApiControllerBase
 
             if (!string.IsNullOrWhiteSpace(code))
             {
-                var codeDuplicated = await _dbContext.Projects.AsNoTracking()
+                var codeDuplicated = await _db.Queryable<Project>()
                     .AnyAsync(p => p.TenantId == tenantId && !p.Deleted && p.Code == code && p.Id != existingProject.Id);
                 if (codeDuplicated)
                 {
@@ -144,7 +143,7 @@ public class ProjectsController : ApiControllerBase
             existingProject.PlannedStartDate = request.PlannedStartDate;
             existingProject.PlannedEndDate = request.PlannedEndDate;
             existingProject.Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
-            await _dbContext.SaveChangesAsync();
+            await _db.UpdateWithTimestampAsync(existingProject);
 
             var restoredDto = new ProjectDto
             {
@@ -163,7 +162,7 @@ public class ProjectsController : ApiControllerBase
         }
         if (!string.IsNullOrWhiteSpace(code))
         {
-            var codeDuplicated = await _dbContext.Projects.AsNoTracking()
+            var codeDuplicated = await _db.Queryable<Project>()
                 .AnyAsync(p => p.TenantId == tenantId && !p.Deleted && p.Code == code);
             if (codeDuplicated)
             {
@@ -183,8 +182,7 @@ public class ProjectsController : ApiControllerBase
             Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim()
         };
 
-        _dbContext.Projects.Add(project);
-        await _dbContext.SaveChangesAsync();
+        await _db.InsertWithTimestampAsync(project);
 
         var dto = new ProjectDto
         {
@@ -211,8 +209,8 @@ public class ProjectsController : ApiControllerBase
             return Failure(401, 40103, "未登录");
         }
 
-        var project = await _dbContext.Projects
-            .FirstOrDefaultAsync(p => p.Id == id && p.TenantId == tenantId && !p.Deleted);
+        var project = await _db.Queryable<Project>()
+            .FirstAsync(p => p.Id == id && p.TenantId == tenantId && !p.Deleted);
         if (project == null)
         {
             return Failure(404, 40401, "项目不存在");
@@ -228,7 +226,7 @@ public class ProjectsController : ApiControllerBase
             var name = request.Name.Trim();
             if (name != project.Name)
             {
-                var duplicated = await _dbContext.Projects.AsNoTracking()
+                var duplicated = await _db.Queryable<Project>()
                     .AnyAsync(p => p.TenantId == tenantId && !p.Deleted && p.Name == name && p.Id != id);
                 if (duplicated)
                 {
@@ -244,7 +242,7 @@ public class ProjectsController : ApiControllerBase
             var code = string.IsNullOrWhiteSpace(request.Code) ? null : request.Code.Trim();
             if (code != project.Code && !string.IsNullOrWhiteSpace(code))
             {
-                var codeDuplicated = await _dbContext.Projects.AsNoTracking()
+                var codeDuplicated = await _db.Queryable<Project>()
                     .AnyAsync(p => p.TenantId == tenantId && !p.Deleted && p.Code == code && p.Id != id);
                 if (codeDuplicated)
                 {
@@ -280,7 +278,7 @@ public class ProjectsController : ApiControllerBase
             project.Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
         }
 
-        await _dbContext.SaveChangesAsync();
+        await _db.UpdateWithTimestampAsync(project);
 
         var dto = new ProjectDto
         {
@@ -307,14 +305,14 @@ public class ProjectsController : ApiControllerBase
             return Failure(401, 40103, "未登录");
         }
 
-        var project = await _dbContext.Projects
-            .FirstOrDefaultAsync(p => p.Id == id && p.TenantId == tenantId && !p.Deleted);
+        var project = await _db.Queryable<Project>()
+            .FirstAsync(p => p.Id == id && p.TenantId == tenantId && !p.Deleted);
         if (project == null)
         {
             return Failure(404, 40401, "项目不存在");
         }
         project.Deleted = true;
-        await _dbContext.SaveChangesAsync();
+        await _db.UpdateWithTimestampAsync(project);
 
         return Success(new { });
     }
@@ -327,4 +325,3 @@ public class ProjectsController : ApiControllerBase
                || string.Equals(status, "archived", StringComparison.OrdinalIgnoreCase);
     }
 }
-

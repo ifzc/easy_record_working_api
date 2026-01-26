@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using EasyRecordWorkingApi.Contracts;
 using EasyRecordWorkingApi.Data;
 using EasyRecordWorkingApi.Dtos;
@@ -6,7 +6,7 @@ using EasyRecordWorkingApi.Models;
 using EasyRecordWorkingApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using SqlSugar;
 
 namespace EasyRecordWorkingApi.Controllers;
 
@@ -14,11 +14,11 @@ namespace EasyRecordWorkingApi.Controllers;
 [Route("api/time-entries")]
 public class TimeEntriesController : ApiControllerBase
 {
-    private readonly AppDbContext _dbContext;
+    private readonly ISqlSugarClient _db;
 
-    public TimeEntriesController(AppDbContext dbContext, IUserContext userContext) : base(userContext)
+    public TimeEntriesController(ISqlSugarClient db, IUserContext userContext) : base(userContext)
     {
-        _dbContext = dbContext;
+        _db = db;
     }
 
     [HttpGet]
@@ -62,83 +62,99 @@ public class TimeEntriesController : ApiControllerBase
         pageSize = Math.Min(pageSize, 200);
 
         var workDateValue = workDate.ToDateTime(TimeOnly.MinValue);
-        var query = from t in _dbContext.TimeEntries.AsNoTracking()
-                    join e in _dbContext.Employees.AsNoTracking() on t.EmployeeId equals e.Id
-                    join p in _dbContext.Projects.AsNoTracking() on t.ProjectId equals p.Id into projectGroup
-                    from p in projectGroup.DefaultIfEmpty()
-                    where t.TenantId == tenantId && !t.Deleted && t.WorkDate == workDateValue
-                    select new { TimeEntry = t, Employee = e, Project = p };
+
+        // Build base query for time entries
+        var timeEntryQuery = _db.Queryable<TimeEntry>()
+            .Where(t => t.TenantId == tenantId && !t.Deleted && t.WorkDate == workDateValue);
 
         if (employeeId.HasValue)
         {
-            query = query.Where(x => x.TimeEntry.EmployeeId == employeeId.Value);
+            timeEntryQuery = timeEntryQuery.Where(t => t.EmployeeId == employeeId.Value);
         }
 
         if (projectId.HasValue)
         {
-            query = query.Where(x => x.TimeEntry.ProjectId == projectId.Value);
+            timeEntryQuery = timeEntryQuery.Where(t => t.ProjectId == projectId.Value);
         }
+
+        // Get employee IDs for filtering
+        var employeeQuery = _db.Queryable<Employee>()
+            .Where(e => e.TenantId == tenantId && !e.Deleted);
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
-            query = query.Where(x => x.Employee.Name.Contains(keyword));
+            employeeQuery = employeeQuery.Where(e => e.Name.Contains(keyword));
         }
 
         if (!string.IsNullOrWhiteSpace(employeeType))
         {
-            query = query.Where(x => x.Employee.Type == employeeType);
+            employeeQuery = employeeQuery.Where(e => e.Type == employeeType);
         }
 
         if (!string.IsNullOrWhiteSpace(workType))
         {
             var trimmedWorkType = workType.Trim();
-            query = query.Where(x => x.Employee.WorkType == trimmedWorkType);
+            employeeQuery = employeeQuery.Where(e => e.WorkType == trimmedWorkType);
         }
 
-        query = sort switch
+        var filteredEmployeeIds = await employeeQuery.Select(e => e.Id).ToListAsync();
+        timeEntryQuery = timeEntryQuery.Where(t => filteredEmployeeIds.Contains(t.EmployeeId));
+
+        timeEntryQuery = sort switch
         {
-            "hours_asc" => query.OrderBy(x => x.TimeEntry.NormalHours + x.TimeEntry.OvertimeHours),
-            "hours_desc" => query.OrderByDescending(x => x.TimeEntry.NormalHours + x.TimeEntry.OvertimeHours),
-            _ => query.OrderByDescending(x => x.TimeEntry.UpdatedAt)
+            "hours_asc" => timeEntryQuery.OrderBy(t => t.NormalHours + t.OvertimeHours),
+            "hours_desc" => timeEntryQuery.OrderByDescending(t => t.NormalHours + t.OvertimeHours),
+            _ => timeEntryQuery.OrderByDescending(t => t.UpdatedAt)
         };
 
-        var total = await query.CountAsync();
-        var rawItems = await query
+        var total = await timeEntryQuery.CountAsync();
+        var timeEntries = await timeEntryQuery
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(x => new
-            {
-                x.TimeEntry.Id,
-                x.TimeEntry.EmployeeId,
-                EmployeeName = x.Employee.Name,
-                EmployeeType = x.Employee.Type,
-                EmployeeWorkType = x.Employee.WorkType ?? string.Empty,
-                x.TimeEntry.ProjectId,
-                ProjectName = x.Project != null ? x.Project.Name : string.Empty,
-                x.TimeEntry.WorkDate,
-                x.TimeEntry.NormalHours,
-                x.TimeEntry.OvertimeHours,
-                x.TimeEntry.Remark,
-                x.TimeEntry.CreatedAt
-            })
             .ToListAsync();
 
-        var items = rawItems.Select(t => new TimeEntryDto
+        // Fetch related employees and projects
+        var relatedEmployeeIds = timeEntries.Select(t => t.EmployeeId).Distinct().ToList();
+        var relatedProjectIds = timeEntries.Where(t => t.ProjectId.HasValue).Select(t => t.ProjectId!.Value).Distinct().ToList();
+
+        var employeesDict = (await _db.Queryable<Employee>()
+            .Where(e => relatedEmployeeIds.Contains(e.Id))
+            .ToListAsync())
+            .ToDictionary(e => e.Id);
+
+        var projectsDict = relatedProjectIds.Count > 0
+            ? (await _db.Queryable<Project>()
+                .Where(p => relatedProjectIds.Contains(p.Id))
+                .ToListAsync())
+                .ToDictionary(p => p.Id)
+            : new Dictionary<Guid, Project>();
+
+        var items = timeEntries.Select(t =>
         {
-            Id = t.Id,
-            EmployeeId = t.EmployeeId,
-            EmployeeName = t.EmployeeName,
-            EmployeeType = t.EmployeeType,
-            WorkType = t.EmployeeWorkType,
-            ProjectId = t.ProjectId,
-            ProjectName = string.IsNullOrWhiteSpace(t.ProjectName) ? null : t.ProjectName,
-            WorkDate = DateOnly.FromDateTime(t.WorkDate),
-            NormalHours = t.NormalHours,
-            OvertimeHours = t.OvertimeHours,
-            Remark = t.Remark,
-            CreatedAt = t.CreatedAt,
-            TotalHours = t.NormalHours + t.OvertimeHours,
-            WorkUnits = t.NormalHours / 8m + t.OvertimeHours / 6m
+            employeesDict.TryGetValue(t.EmployeeId, out var emp);
+            Project? proj = null;
+            if (t.ProjectId.HasValue)
+            {
+                projectsDict.TryGetValue(t.ProjectId.Value, out proj);
+            }
+
+            return new TimeEntryDto
+            {
+                Id = t.Id,
+                EmployeeId = t.EmployeeId,
+                EmployeeName = emp?.Name ?? string.Empty,
+                EmployeeType = emp?.Type ?? string.Empty,
+                WorkType = emp?.WorkType ?? string.Empty,
+                ProjectId = t.ProjectId,
+                ProjectName = proj?.Name,
+                WorkDate = DateOnly.FromDateTime(t.WorkDate),
+                NormalHours = t.NormalHours,
+                OvertimeHours = t.OvertimeHours,
+                Remark = t.Remark,
+                CreatedAt = t.CreatedAt,
+                TotalHours = t.NormalHours + t.OvertimeHours,
+                WorkUnits = t.NormalHours / 8m + t.OvertimeHours / 6m
+            };
         }).ToList();
 
         var data = new PagedResult<TimeEntryDto>
@@ -166,8 +182,8 @@ public class TimeEntriesController : ApiControllerBase
             return Failure(400, 40001, "参数错误", "工时必须为非负且步进为 0.5");
         }
 
-        var employee = await _dbContext.Employees.AsNoTracking()
-            .FirstOrDefaultAsync(e => e.Id == request.EmployeeId && e.TenantId == tenantId && !e.Deleted);
+        var employee = await _db.Queryable<Employee>()
+            .FirstAsync(e => e.Id == request.EmployeeId && e.TenantId == tenantId && !e.Deleted);
         if (employee == null)
         {
             return Failure(404, 40401, "员工不存在");
@@ -180,8 +196,8 @@ public class TimeEntriesController : ApiControllerBase
         }
 
         var workDate = request.WorkDate.ToDateTime(TimeOnly.MinValue);
-        var existing = await _dbContext.TimeEntries
-            .FirstOrDefaultAsync(t => t.TenantId == tenantId && t.EmployeeId == request.EmployeeId && t.WorkDate == workDate);
+        var existing = await _db.Queryable<TimeEntry>()
+            .FirstAsync(t => t.TenantId == tenantId && t.EmployeeId == request.EmployeeId && t.WorkDate == workDate);
         if (existing != null)
         {
             if (!existing.Deleted)
@@ -194,7 +210,7 @@ public class TimeEntriesController : ApiControllerBase
             existing.OvertimeHours = request.OvertimeHours;
             existing.Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
             existing.ProjectId = request.ProjectId;
-            await _dbContext.SaveChangesAsync();
+            await _db.UpdateWithTimestampAsync(existing);
 
             var restoredDto = new TimeEntryDto
             {
@@ -228,8 +244,7 @@ public class TimeEntriesController : ApiControllerBase
             Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim()
         };
 
-        _dbContext.TimeEntries.Add(timeEntry);
-        await _dbContext.SaveChangesAsync();
+        await _db.InsertWithTimestampAsync(timeEntry);
 
         var dto = new TimeEntryDto
         {
@@ -283,7 +298,7 @@ public class TimeEntriesController : ApiControllerBase
         }
 
         var employeeIds = request.EmployeeIds.Distinct().ToList();
-        var employees = await _dbContext.Employees.AsNoTracking()
+        var employees = await _db.Queryable<Employee>()
             .Where(e => e.TenantId == tenantId && !e.Deleted && employeeIds.Contains(e.Id))
             .ToListAsync();
 
@@ -312,11 +327,11 @@ public class TimeEntriesController : ApiControllerBase
                 continue;
             }
 
-            foreach (var workDate in workDates)
+        foreach (var workDate in workDates)
             {
                 var workDateTime = workDate.ToDateTime(TimeOnly.MinValue);
-                var existing = await _dbContext.TimeEntries
-                    .FirstOrDefaultAsync(t => t.TenantId == tenantId && t.EmployeeId == employeeId && t.WorkDate == workDateTime);
+                var existing = await _db.Queryable<TimeEntry>()
+                    .FirstAsync(t => t.TenantId == tenantId && t.EmployeeId == employeeId && t.WorkDate == workDateTime);
                 if (existing != null)
                 {
                     if (!existing.Deleted)
@@ -359,7 +374,7 @@ public class TimeEntriesController : ApiControllerBase
                     Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim()
                 };
 
-                _dbContext.TimeEntries.Add(timeEntry);
+                await _db.InsertWithTimestampAsync(timeEntry);
                 details.Add(new BatchCreateTimeEntryDetail
                 {
                     EmployeeId = employeeId,
@@ -371,10 +386,7 @@ public class TimeEntriesController : ApiControllerBase
             }
         }
 
-        if (created > 0)
-        {
-            await _dbContext.SaveChangesAsync();
-        }
+        // SaveChanges already done per insert above
 
         var result = new BatchCreateTimeEntriesResult
         {
@@ -401,15 +413,15 @@ public class TimeEntriesController : ApiControllerBase
             return Failure(400, 40001, "参数错误", "工时必须为非负且步进为 0.5");
         }
 
-        var timeEntry = await _dbContext.TimeEntries
-            .FirstOrDefaultAsync(t => t.Id == id && t.TenantId == tenantId);
+        var timeEntry = await _db.Queryable<TimeEntry>()
+            .FirstAsync(t => t.Id == id && t.TenantId == tenantId);
         if (timeEntry == null)
         {
             return Failure(404, 40401, "记工不存在");
         }
 
-        var employee = await _dbContext.Employees.AsNoTracking()
-            .FirstOrDefaultAsync(e => e.Id == request.EmployeeId && e.TenantId == tenantId);
+        var employee = await _db.Queryable<Employee>()
+            .FirstAsync(e => e.Id == request.EmployeeId && e.TenantId == tenantId);
         if (employee == null)
         {
             return Failure(404, 40401, "员工不存在");
@@ -422,7 +434,7 @@ public class TimeEntriesController : ApiControllerBase
         }
 
         var workDate = request.WorkDate.ToDateTime(TimeOnly.MinValue);
-        var duplicateExists = await _dbContext.TimeEntries
+        var duplicateExists = await _db.Queryable<TimeEntry>()
             .AnyAsync(t => t.Id != id && t.TenantId == tenantId && !t.Deleted && t.EmployeeId == request.EmployeeId && t.WorkDate == workDate);
         if (duplicateExists)
         {
@@ -439,7 +451,7 @@ public class TimeEntriesController : ApiControllerBase
             timeEntry.Remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
         }
 
-        await _dbContext.SaveChangesAsync();
+        await _db.UpdateWithTimestampAsync(timeEntry);
 
         var dto = new TimeEntryDto
         {
@@ -471,15 +483,15 @@ public class TimeEntriesController : ApiControllerBase
             return Failure(401, 40103, "未登录");
         }
 
-        var timeEntry = await _dbContext.TimeEntries
-            .FirstOrDefaultAsync(t => t.Id == id && t.TenantId == tenantId && !t.Deleted);
+        var timeEntry = await _db.Queryable<TimeEntry>()
+            .FirstAsync(t => t.Id == id && t.TenantId == tenantId && !t.Deleted);
         if (timeEntry == null)
         {
             return Failure(404, 40401, "记工不存在");
         }
 
         timeEntry.Deleted = true;
-        await _dbContext.SaveChangesAsync();
+        await _db.UpdateWithTimestampAsync(timeEntry);
 
         return Success(new { });
     }
@@ -527,7 +539,7 @@ public class TimeEntriesController : ApiControllerBase
             return Failure(400, 40001, "参数错误", "month 或 date 至少提供一个");
         }
 
-        var query = _dbContext.TimeEntries.AsNoTracking()
+        var query = _db.Queryable<TimeEntry>()
             .Where(t => t.TenantId == tenantId && !t.Deleted && t.WorkDate >= startDate && t.WorkDate <= endDate);
 
         if (employeeId.HasValue)
@@ -537,19 +549,21 @@ public class TimeEntriesController : ApiControllerBase
 
         if (!string.IsNullOrWhiteSpace(employeeType))
         {
-            var employeeIds = _dbContext.Employees.AsNoTracking()
+            var empIds = await _db.Queryable<Employee>()
                 .Where(e => e.TenantId == tenantId && !e.Deleted && e.Type == employeeType)
-                .Select(e => e.Id);
-            query = query.Where(t => employeeIds.Contains(t.EmployeeId));
+                .Select(e => e.Id)
+                .ToListAsync();
+            query = query.Where(t => empIds.Contains(t.EmployeeId));
         }
 
         if (!string.IsNullOrWhiteSpace(workType))
         {
             var trimmedWorkType = workType.Trim();
-            var employeeIds = _dbContext.Employees.AsNoTracking()
+            var empIds = await _db.Queryable<Employee>()
                 .Where(e => e.TenantId == tenantId && !e.Deleted && e.WorkType == trimmedWorkType)
-                .Select(e => e.Id);
-            query = query.Where(t => employeeIds.Contains(t.EmployeeId));
+                .Select(e => e.Id)
+                .ToListAsync();
+            query = query.Where(t => empIds.Contains(t.EmployeeId));
         }
 
         if (projectId.HasValue)
@@ -561,11 +575,11 @@ public class TimeEntriesController : ApiControllerBase
             .GroupBy(t => t.WorkDate)
             .Select(g => new
             {
-                g.Key,
-                NormalHours = g.Sum(x => x.NormalHours),
-                OvertimeHours = g.Sum(x => x.OvertimeHours),
-                TotalHours = g.Sum(x => x.NormalHours + x.OvertimeHours),
-                Headcount = g.Select(x => x.EmployeeId).Distinct().Count()
+                Key = g.WorkDate,
+                NormalHours = SqlFunc.AggregateSum(g.NormalHours),
+                OvertimeHours = SqlFunc.AggregateSum(g.OvertimeHours),
+                TotalHours = SqlFunc.AggregateSum(g.NormalHours + g.OvertimeHours),
+                Headcount = SqlFunc.AggregateDistinctCount(g.EmployeeId)
             })
             .OrderBy(x => x.Key)
             .ToListAsync();
@@ -648,52 +662,55 @@ public class TimeEntriesController : ApiControllerBase
             return Failure(400, 40001, "参数错误", "month 或 date 至少提供一个");
         }
 
-        var query = _dbContext.TimeEntries.AsNoTracking()
+        var query2 = _db.Queryable<TimeEntry>()
             .Where(t => t.TenantId == tenantId && !t.Deleted && t.WorkDate >= startDate && t.WorkDate <= endDate);
 
         if (employeeId.HasValue)
         {
-            query = query.Where(t => t.EmployeeId == employeeId.Value);
+            query2 = query2.Where(t => t.EmployeeId == employeeId.Value);
         }
 
         if (!string.IsNullOrWhiteSpace(employeeType))
         {
-            var employeeIds = _dbContext.Employees.AsNoTracking()
+            var empIds = await _db.Queryable<Employee>()
                 .Where(e => e.TenantId == tenantId && !e.Deleted && e.Type == employeeType)
-                .Select(e => e.Id);
-            query = query.Where(t => employeeIds.Contains(t.EmployeeId));
+                .Select(e => e.Id)
+                .ToListAsync();
+            query2 = query2.Where(t => empIds.Contains(t.EmployeeId));
         }
 
         if (!string.IsNullOrWhiteSpace(workType))
         {
             var trimmedWorkType = workType.Trim();
-            var employeeIds = _dbContext.Employees.AsNoTracking()
+            var empIds = await _db.Queryable<Employee>()
                 .Where(e => e.TenantId == tenantId && !e.Deleted && e.WorkType == trimmedWorkType)
-                .Select(e => e.Id);
-            query = query.Where(t => employeeIds.Contains(t.EmployeeId));
+                .Select(e => e.Id)
+                .ToListAsync();
+            query2 = query2.Where(t => empIds.Contains(t.EmployeeId));
         }
 
         if (projectId.HasValue)
         {
-            query = query.Where(t => t.ProjectId == projectId.Value);
+            query2 = query2.Where(t => t.ProjectId == projectId.Value);
         }
 
-        var data = await (from t in query
-                          join p in _dbContext.Projects.AsNoTracking() on t.ProjectId equals p.Id into projectGroup
-                          from p in projectGroup.DefaultIfEmpty()
-                          group t by new
-                          {
-                              t.ProjectId,
-                              ProjectName = p != null ? p.Name : "未关联项目"
-                          } into g
-                          select new ProjectWorkUnitSummaryDto
-                          {
-                              ProjectId = g.Key.ProjectId,
-                              ProjectName = g.Key.ProjectName,
-                              WorkUnits = g.Sum(x => x.NormalHours / 8m + x.OvertimeHours / 6m)
-                          })
-            .OrderByDescending(x => x.WorkUnits)
+        var timeEntries = await query2.ToListAsync();
+        var projectIds = timeEntries.Where(t => t.ProjectId.HasValue).Select(t => t.ProjectId!.Value).Distinct().ToList();
+        var projects = await _db.Queryable<Project>()
+            .Where(p => projectIds.Contains(p.Id))
             .ToListAsync();
+        var projectMap = projects.ToDictionary(p => p.Id, p => p.Name);
+
+        var data = timeEntries
+            .GroupBy(t => t.ProjectId)
+            .Select(g => new ProjectWorkUnitSummaryDto
+            {
+                ProjectId = g.Key,
+                ProjectName = g.Key.HasValue && projectMap.TryGetValue(g.Key.Value, out var name) ? name : "未关联项目",
+                WorkUnits = g.Sum(x => x.NormalHours / 8m + x.OvertimeHours / 6m)
+            })
+            .OrderByDescending(x => x.WorkUnits)
+            .ToList();
 
         return Success(data);
     }
@@ -741,51 +758,55 @@ public class TimeEntriesController : ApiControllerBase
             return Failure(400, 40001, "参数错误", "month 或 date 至少提供一个");
         }
 
-        var query = _dbContext.TimeEntries.AsNoTracking()
+        var query3 = _db.Queryable<TimeEntry>()
             .Where(t => t.TenantId == tenantId && !t.Deleted && t.WorkDate >= startDate && t.WorkDate <= endDate);
 
         if (employeeId.HasValue)
         {
-            query = query.Where(t => t.EmployeeId == employeeId.Value);
+            query3 = query3.Where(t => t.EmployeeId == employeeId.Value);
         }
 
         if (!string.IsNullOrWhiteSpace(employeeType))
         {
-            var employeeIds = _dbContext.Employees.AsNoTracking()
+            var empIds = await _db.Queryable<Employee>()
                 .Where(e => e.TenantId == tenantId && !e.Deleted && e.Type == employeeType)
-                .Select(e => e.Id);
-            query = query.Where(t => employeeIds.Contains(t.EmployeeId));
+                .Select(e => e.Id)
+                .ToListAsync();
+            query3 = query3.Where(t => empIds.Contains(t.EmployeeId));
         }
 
         if (!string.IsNullOrWhiteSpace(workType))
         {
             var trimmedWorkType = workType.Trim();
-            var employeeIds = _dbContext.Employees.AsNoTracking()
+            var empIds = await _db.Queryable<Employee>()
                 .Where(e => e.TenantId == tenantId && !e.Deleted && e.WorkType == trimmedWorkType)
-                .Select(e => e.Id);
-            query = query.Where(t => employeeIds.Contains(t.EmployeeId));
+                .Select(e => e.Id)
+                .ToListAsync();
+            query3 = query3.Where(t => empIds.Contains(t.EmployeeId));
         }
 
         if (projectId.HasValue)
         {
-            query = query.Where(t => t.ProjectId == projectId.Value);
+            query3 = query3.Where(t => t.ProjectId == projectId.Value);
         }
 
-        var data = await (from t in query
-                          join e in _dbContext.Employees.AsNoTracking() on t.EmployeeId equals e.Id
-                          group t by new
-                          {
-                              t.EmployeeId,
-                              EmployeeName = e.Name
-                          } into g
-                          select new EmployeeWorkUnitSummaryDto
-                          {
-                              EmployeeId = g.Key.EmployeeId,
-                              EmployeeName = g.Key.EmployeeName,
-                              WorkUnits = g.Sum(x => x.NormalHours / 8m + x.OvertimeHours / 6m)
-                          })
-            .OrderByDescending(x => x.WorkUnits)
+        var timeEntries3 = await query3.ToListAsync();
+        var employeeIds3 = timeEntries3.Select(t => t.EmployeeId).Distinct().ToList();
+        var employees = await _db.Queryable<Employee>()
+            .Where(e => employeeIds3.Contains(e.Id))
             .ToListAsync();
+        var employeeMap = employees.ToDictionary(e => e.Id, e => e.Name);
+
+        var data = timeEntries3
+            .GroupBy(t => t.EmployeeId)
+            .Select(g => new EmployeeWorkUnitSummaryDto
+            {
+                EmployeeId = g.Key,
+                EmployeeName = employeeMap.TryGetValue(g.Key, out var name) ? name : "未知员工",
+                WorkUnits = g.Sum(x => x.NormalHours / 8m + x.OvertimeHours / 6m)
+            })
+            .OrderByDescending(x => x.WorkUnits)
+            .ToList();
 
         return Success(data);
     }
@@ -797,8 +818,8 @@ public class TimeEntriesController : ApiControllerBase
             return null;
         }
 
-        return await _dbContext.Projects.AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == projectId.Value && p.TenantId == tenantId && !p.Deleted);
+        return await _db.Queryable<Project>()
+            .FirstAsync(p => p.Id == projectId.Value && p.TenantId == tenantId && !p.Deleted);
     }
 
     private static bool IsValidHour(decimal value)

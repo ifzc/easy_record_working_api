@@ -1,12 +1,11 @@
 using System.Text;
-using EasyRecordWorkingApi.Data;
 using EasyRecordWorkingApi.Options;
 using EasyRecordWorkingApi.Services;
 using EasyRecordWorkingApi.Utilities;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using SqlSugar;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -47,8 +46,46 @@ if (string.IsNullOrWhiteSpace(connectionString))
     throw new InvalidOperationException("缺少数据库连接字符串: ConnectionStrings:Default");
 }
 
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
+builder.Services.AddScoped<ISqlSugarClient>(provider =>
+{
+    var config = new ConnectionConfig
+    {
+        ConnectionString = connectionString,
+        DbType = DbType.MySql,
+        IsAutoCloseConnection = true,
+        InitKeyType = InitKeyType.Attribute,
+        ConfigureExternalServices = new ConfigureExternalServices
+        {
+            EntityService = (property, column) =>
+            {
+                column.DbColumnName = ToSnakeCase(property.Name);
+            }
+        },
+        MoreSettings = new ConnMoreSettings
+        {
+            IsAutoRemoveDataCache = true
+        }
+    };
+
+    return new SqlSugarClient(config);
+});
+
+static string ToSnakeCase(string name)
+{
+    if (string.IsNullOrEmpty(name)) return name;
+    var sb = new StringBuilder(name.Length + 8);
+    for (var i = 0; i < name.Length; i++)
+    {
+        var c = name[i];
+        if (char.IsUpper(c))
+        {
+            if (i > 0) sb.Append('_');
+            sb.Append(char.ToLowerInvariant(c));
+        }
+        else sb.Append(c);
+    }
+    return sb.ToString();
+}
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 

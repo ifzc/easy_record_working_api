@@ -1,28 +1,28 @@
-﻿using System.Text;
+using System.Text;
 using EasyRecordWorkingApi.Data;
 using EasyRecordWorkingApi.Dtos;
 using EasyRecordWorkingApi.Models;
 using EasyRecordWorkingApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using SqlSugar;
 
 namespace EasyRecordWorkingApi.Controllers;
 
 [Route("api/auth")]
 public class AuthController : ApiControllerBase
 {
-    private readonly AppDbContext _dbContext;
+    private readonly ISqlSugarClient _db;
     private readonly PasswordHasher _passwordHasher;
     private readonly JwtTokenService _jwtTokenService;
 
     public AuthController(
-        AppDbContext dbContext,
+        ISqlSugarClient db,
         PasswordHasher passwordHasher,
         JwtTokenService jwtTokenService,
         IUserContext userContext) : base(userContext)
     {
-        _dbContext = dbContext;
+        _db = db;
         _passwordHasher = passwordHasher;
         _jwtTokenService = jwtTokenService;
     }
@@ -42,19 +42,19 @@ public class AuthController : ApiControllerBase
 
         if (!string.IsNullOrWhiteSpace(tenantCode))
         {
-            tenant = await _dbContext.Tenants.AsNoTracking()
-                .FirstOrDefaultAsync(t => t.Code == tenantCode);
+            tenant = await _db.Queryable<Tenant>()
+                .FirstAsync(t => t.Code == tenantCode);
             if (tenant == null)
             {
                 return Failure(401, 40101, "账号或密码错误");
             }
 
-            user = await _dbContext.Users.AsNoTracking()
-                .FirstOrDefaultAsync(u => u.TenantId == tenant.Id && u.Account == account);
+            user = await _db.Queryable<User>()
+                .FirstAsync(u => u.TenantId == tenant.Id && u.Account == account);
         }
         else
         {
-            var users = await _dbContext.Users.AsNoTracking()
+            var users = await _db.Queryable<User>()
                 .Where(u => u.Account == account)
                 .ToListAsync();
             if (users.Count == 0)
@@ -68,8 +68,8 @@ public class AuthController : ApiControllerBase
             }
 
             user = users[0];
-            tenant = await _dbContext.Tenants.AsNoTracking()
-                .FirstOrDefaultAsync(t => t.Id == user.TenantId);
+            tenant = await _db.Queryable<Tenant>()
+                .FirstAsync(t => t.Id == user.TenantId);
         }
 
         if (user == null || tenant == null)
@@ -153,7 +153,7 @@ public class AuthController : ApiControllerBase
             return Failure(400, 40001, "参数错误", "account 长度不能超过 100");
         }
 
-        var accountExists = await _dbContext.Users.AsNoTracking()
+        var accountExists = await _db.Queryable<User>()
             .AnyAsync(u => u.Account == account);
         if (accountExists)
         {
@@ -184,9 +184,8 @@ public class AuthController : ApiControllerBase
             Status = "active"
         };
 
-        _dbContext.Tenants.Add(tenant);
-        _dbContext.Users.Add(user);
-        await _dbContext.SaveChangesAsync();
+        await _db.InsertWithTimestampAsync(tenant);
+        await _db.InsertWithTimestampAsync(user);
 
         var token = _jwtTokenService.CreateToken(user, tenant);
         var response = new LoginResponse
@@ -221,10 +220,10 @@ public class AuthController : ApiControllerBase
             return Failure(401, 40103, "未登录");
         }
 
-        var user = await _dbContext.Users.AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == userId && u.TenantId == tenantId);
-        var tenant = await _dbContext.Tenants.AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Id == tenantId);
+        var user = await _db.Queryable<User>()
+            .FirstAsync(u => u.Id == userId && u.TenantId == tenantId);
+        var tenant = await _db.Queryable<Tenant>()
+            .FirstAsync(t => t.Id == tenantId);
 
         if (user == null || tenant == null)
         {
@@ -272,8 +271,8 @@ public class AuthController : ApiControllerBase
             return Failure(401, 40103, "未登录");
         }
 
-        var user = await _dbContext.Users
-            .FirstOrDefaultAsync(u => u.Id == userId && u.TenantId == tenantId);
+        var user = await _db.Queryable<User>()
+            .FirstAsync(u => u.Id == userId && u.TenantId == tenantId);
         if (user == null)
         {
             return Failure(401, 40103, "未登录");
@@ -285,7 +284,7 @@ public class AuthController : ApiControllerBase
         }
 
         user.PasswordHash = _passwordHasher.Hash(request.NewPassword);
-        await _dbContext.SaveChangesAsync();
+        await _db.UpdateWithTimestampAsync(user);
 
         return Success(new { });
     }
@@ -312,15 +311,15 @@ public class AuthController : ApiControllerBase
             return Failure(401, 40103, "未登录");
         }
 
-        var user = await _dbContext.Users
-            .FirstOrDefaultAsync(u => u.Id == userId && u.TenantId == tenantId);
+        var user = await _db.Queryable<User>()
+            .FirstAsync(u => u.Id == userId && u.TenantId == tenantId);
         if (user == null)
         {
             return Failure(401, 40103, "未登录");
         }
 
         user.DisplayName = displayName;
-        await _dbContext.SaveChangesAsync();
+        await _db.UpdateWithTimestampAsync(user);
 
         return Success(new
         {

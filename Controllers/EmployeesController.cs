@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using EasyRecordWorkingApi.Contracts;
 using EasyRecordWorkingApi.Data;
 using EasyRecordWorkingApi.Dtos;
@@ -6,7 +6,7 @@ using EasyRecordWorkingApi.Models;
 using EasyRecordWorkingApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using SqlSugar;
 
 namespace EasyRecordWorkingApi.Controllers;
 
@@ -14,12 +14,12 @@ namespace EasyRecordWorkingApi.Controllers;
 [Route("api/employees")]
 public class EmployeesController : ApiControllerBase
 {
-    private readonly AppDbContext _dbContext;
+    private readonly ISqlSugarClient _db;
     private const char TagSeparator = '|';
 
-    public EmployeesController(AppDbContext dbContext, IUserContext userContext) : base(userContext)
+    public EmployeesController(ISqlSugarClient db, IUserContext userContext) : base(userContext)
     {
-        _dbContext = dbContext;
+        _db = db;
     }
 
     [HttpGet]
@@ -50,7 +50,7 @@ public class EmployeesController : ApiControllerBase
 
         pageSize = Math.Min(pageSize, 200);
 
-        var query = _dbContext.Employees.AsNoTracking()
+        var query = _db.Queryable<Employee>()
             .Where(e => e.TenantId == tenantId && !e.Deleted);
 
         if (!string.IsNullOrWhiteSpace(keyword))
@@ -88,23 +88,24 @@ public class EmployeesController : ApiControllerBase
         };
 
         var total = await query.CountAsync();
-        var items = await query
+        var rawItems = await query
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(e => new EmployeeDto
-            {
-                Id = e.Id,
-                Name = e.Name,
-                Type = e.Type,
-                WorkType = e.WorkType,
-                Phone = e.Phone,
-                IdCardNumber = e.IdCardNumber,
-                Remark = e.Remark,
-                Tags = ParseTags(e.Tags),
-                CreatedAt = e.CreatedAt,
-                UpdatedAt = e.UpdatedAt
-            })
             .ToListAsync();
+
+        var items = rawItems.Select(e => new EmployeeDto
+        {
+            Id = e.Id,
+            Name = e.Name,
+            Type = e.Type,
+            WorkType = e.WorkType,
+            Phone = e.Phone,
+            IdCardNumber = e.IdCardNumber,
+            Remark = e.Remark,
+            Tags = ParseTags(e.Tags),
+            CreatedAt = e.CreatedAt,
+            UpdatedAt = e.UpdatedAt
+        }).ToList();
 
         var data = new PagedResult<EmployeeDto>
         {
@@ -142,7 +143,7 @@ public class EmployeesController : ApiControllerBase
             return Failure(400, 40001, "参数错误", "type 必须为 正式工 或 临时工");
         }
 
-        var duplicated = await _dbContext.Employees.AsNoTracking()
+        var duplicated = await _db.Queryable<Employee>()
             .AnyAsync(e => e.TenantId == tenantId && e.Name == name && !e.Deleted);
         if (duplicated)
         {
@@ -162,8 +163,7 @@ public class EmployeesController : ApiControllerBase
             Tags = NormalizeTagsString(request.Tags)
         };
 
-        _dbContext.Employees.Add(employee);
-        await _dbContext.SaveChangesAsync();
+        await _db.InsertWithTimestampAsync(employee);
 
         var dto = new EmployeeDto
         {
@@ -191,8 +191,8 @@ public class EmployeesController : ApiControllerBase
             return Failure(401, 40103, "未登录");
         }
 
-        var employee = await _dbContext.Employees
-            .FirstOrDefaultAsync(e => e.Id == id && e.TenantId == tenantId && !e.Deleted);
+        var employee = await _db.Queryable<Employee>()
+            .FirstAsync(e => e.Id == id && e.TenantId == tenantId && !e.Deleted);
         if (employee == null)
         {
             return Failure(404, 40401, "员工不存在");
@@ -243,7 +243,7 @@ public class EmployeesController : ApiControllerBase
             employee.Tags = NormalizeTagsString(request.Tags);
         }
 
-        await _dbContext.SaveChangesAsync();
+        await _db.UpdateWithTimestampAsync(employee);
 
         var dto = new EmployeeDto
         {
@@ -271,15 +271,15 @@ public class EmployeesController : ApiControllerBase
             return Failure(401, 40103, "未登录");
         }
 
-        var employee = await _dbContext.Employees
-            .FirstOrDefaultAsync(e => e.Id == id && e.TenantId == tenantId && !e.Deleted);
+        var employee = await _db.Queryable<Employee>()
+            .FirstAsync(e => e.Id == id && e.TenantId == tenantId && !e.Deleted);
         if (employee == null)
         {
             return Failure(404, 40401, "员工不存在");
         }
 
         employee.Deleted = true;
-        await _dbContext.SaveChangesAsync();
+        await _db.UpdateWithTimestampAsync(employee);
 
         return Success(new { });
     }
@@ -300,7 +300,7 @@ public class EmployeesController : ApiControllerBase
         }
 
         var existingNames = new HashSet<string>(
-            await _dbContext.Employees.AsNoTracking()
+            await _db.Queryable<Employee>()
                 .Where(e => e.TenantId == tenantId && !e.Deleted)
                 .Select(e => e.Name)
                 .ToListAsync(),
@@ -308,6 +308,7 @@ public class EmployeesController : ApiControllerBase
 
         var imported = 0;
         var skipped = 0;
+        var employeesToInsert = new List<Employee>();
 
         using var reader = new StreamReader(request.File.OpenReadStream(), Encoding.UTF8, true);
         var isFirstLine = true;
@@ -376,13 +377,13 @@ public class EmployeesController : ApiControllerBase
                 Remark = string.IsNullOrWhiteSpace(remark) ? null : remark
             };
 
-            _dbContext.Employees.Add(employee);
+            employeesToInsert.Add(employee);
             imported++;
         }
 
-        if (imported > 0)
+        if (employeesToInsert.Count > 0)
         {
-            await _dbContext.SaveChangesAsync();
+            await _db.InsertRangeWithTimestampAsync(employeesToInsert);
         }
 
         var result = new ImportEmployeesResult
@@ -408,10 +409,8 @@ public class EmployeesController : ApiControllerBase
             return Failure(400, 40001, "参数错误", "format 仅支持 csv");
         }
 
-        var query = _dbContext.Employees.AsNoTracking()
-            .Where(e => e.TenantId == tenantId && !e.Deleted);
-
-        var employees = await query
+        var employees = await _db.Queryable<Employee>()
+            .Where(e => e.TenantId == tenantId && !e.Deleted)
             .OrderBy(e => e.Name)
             .ToListAsync();
 
@@ -470,12 +469,3 @@ public class EmployeesController : ApiControllerBase
             .ToList();
     }
 }
-
-
-
-
-
-
-
-
-
