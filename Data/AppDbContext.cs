@@ -39,10 +39,6 @@ public class AppDbContext : DbContext
             entity.Property(e => e.DisplayName).HasMaxLength(100);
             entity.Property(e => e.Role).HasMaxLength(20).IsRequired();
             entity.Property(e => e.Status).HasMaxLength(20).IsRequired();
-            entity.HasOne(e => e.Tenant)
-                .WithMany()
-                .HasForeignKey(e => e.TenantId)
-                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Employee>(entity =>
@@ -58,10 +54,6 @@ public class AppDbContext : DbContext
             entity.Property(e => e.IdCardNumber).HasMaxLength(30);
             entity.Property(e => e.Remark).HasMaxLength(200);
             entity.Property(e => e.Deleted).HasDefaultValue(false).IsRequired();
-            entity.HasOne(e => e.Tenant)
-                .WithMany()
-                .HasForeignKey(e => e.TenantId)
-                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<TimeEntry>(entity =>
@@ -78,18 +70,6 @@ public class AppDbContext : DbContext
             entity.Property(e => e.OvertimeHours).HasPrecision(5, 2).HasDefaultValue(0).IsRequired();
             entity.Property(e => e.Remark).HasMaxLength(200);
             entity.Property(e => e.Deleted).HasDefaultValue(false).IsRequired();
-            entity.HasOne(e => e.Employee)
-                .WithMany()
-                .HasForeignKey(e => e.EmployeeId)
-                .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne(e => e.Project)
-                .WithMany()
-                .HasForeignKey(e => e.ProjectId)
-                .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne(e => e.Tenant)
-                .WithMany()
-                .HasForeignKey(e => e.TenantId)
-                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Project>(entity =>
@@ -105,10 +85,6 @@ public class AppDbContext : DbContext
             entity.Property(e => e.Status).HasMaxLength(20).IsRequired().HasDefaultValue("active");
             entity.Property(e => e.Remark).HasMaxLength(500);
             entity.Property(e => e.Deleted).HasDefaultValue(false).IsRequired();
-            entity.HasOne(e => e.Tenant)
-                .WithMany()
-                .HasForeignKey(e => e.TenantId)
-                .OnDelete(DeleteBehavior.Restrict);
         });
 
         ApplySnakeCaseNames(modelBuilder);

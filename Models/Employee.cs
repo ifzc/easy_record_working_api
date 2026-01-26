@@ -4,7 +4,7 @@ public class Employee : TenantEntity
 {
     public string Name { get; set; } = string.Empty;
 
-    public string Type { get; set; }
+    public string Type { get; set; } = string.Empty;
 
     public string? WorkType { get; set; }
 
@@ -17,6 +17,4 @@ public class Employee : TenantEntity
     public string? Tags { get; set; }
 
     public bool Deleted { get; set; }
-
-    public Tenant? Tenant { get; set; }
 }

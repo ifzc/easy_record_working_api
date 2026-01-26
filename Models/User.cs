@@ -11,6 +11,4 @@ public class User : TenantEntity
     public string Role { get; set; } = "member";
 
     public string Status { get; set; } = "active";
-
-    public Tenant? Tenant { get; set; }
 }

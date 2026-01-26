@@ -62,62 +62,64 @@ public class TimeEntriesController : ApiControllerBase
         pageSize = Math.Min(pageSize, 200);
 
         var workDateValue = workDate.ToDateTime(TimeOnly.MinValue);
-        var query = _dbContext.TimeEntries.AsNoTracking()
-            .Include(t => t.Employee)
-            .Include(t => t.Project)
-            .Where(t => t.TenantId == tenantId && !t.Deleted && t.WorkDate == workDateValue);
+        var query = from t in _dbContext.TimeEntries.AsNoTracking()
+                    join e in _dbContext.Employees.AsNoTracking() on t.EmployeeId equals e.Id
+                    join p in _dbContext.Projects.AsNoTracking() on t.ProjectId equals p.Id into projectGroup
+                    from p in projectGroup.DefaultIfEmpty()
+                    where t.TenantId == tenantId && !t.Deleted && t.WorkDate == workDateValue
+                    select new { TimeEntry = t, Employee = e, Project = p };
 
         if (employeeId.HasValue)
         {
-            query = query.Where(t => t.EmployeeId == employeeId.Value);
+            query = query.Where(x => x.TimeEntry.EmployeeId == employeeId.Value);
         }
 
         if (projectId.HasValue)
         {
-            query = query.Where(t => t.ProjectId == projectId.Value);
+            query = query.Where(x => x.TimeEntry.ProjectId == projectId.Value);
         }
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
-            query = query.Where(t => t.Employee != null && t.Employee.Name.Contains(keyword));
+            query = query.Where(x => x.Employee.Name.Contains(keyword));
         }
 
         if (!string.IsNullOrWhiteSpace(employeeType))
         {
-            query = query.Where(t => t.Employee != null && t.Employee.Type == employeeType);
+            query = query.Where(x => x.Employee.Type == employeeType);
         }
 
         if (!string.IsNullOrWhiteSpace(workType))
         {
             var trimmedWorkType = workType.Trim();
-            query = query.Where(t => t.Employee != null && t.Employee.WorkType == trimmedWorkType);
+            query = query.Where(x => x.Employee.WorkType == trimmedWorkType);
         }
 
         query = sort switch
         {
-            "hours_asc" => query.OrderBy(t => t.NormalHours + t.OvertimeHours),
-            "hours_desc" => query.OrderByDescending(t => t.NormalHours + t.OvertimeHours),
-            _ => query.OrderByDescending(t => t.UpdatedAt)
+            "hours_asc" => query.OrderBy(x => x.TimeEntry.NormalHours + x.TimeEntry.OvertimeHours),
+            "hours_desc" => query.OrderByDescending(x => x.TimeEntry.NormalHours + x.TimeEntry.OvertimeHours),
+            _ => query.OrderByDescending(x => x.TimeEntry.UpdatedAt)
         };
 
         var total = await query.CountAsync();
         var rawItems = await query
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(t => new
+            .Select(x => new
             {
-                t.Id,
-                t.EmployeeId,
-                EmployeeName = t.Employee != null ? t.Employee.Name : string.Empty,
-                EmployeeType = t.Employee != null ? t.Employee.Type : string.Empty,
-                EmployeeWorkType = t.Employee != null ? t.Employee.WorkType : string.Empty,
-                t.ProjectId,
-                ProjectName = t.Project != null ? t.Project.Name : string.Empty,
-                t.WorkDate,
-                t.NormalHours,
-                t.OvertimeHours,
-                t.Remark,
-                t.CreatedAt
+                x.TimeEntry.Id,
+                x.TimeEntry.EmployeeId,
+                EmployeeName = x.Employee.Name,
+                EmployeeType = x.Employee.Type,
+                EmployeeWorkType = x.Employee.WorkType ?? string.Empty,
+                x.TimeEntry.ProjectId,
+                ProjectName = x.Project != null ? x.Project.Name : string.Empty,
+                x.TimeEntry.WorkDate,
+                x.TimeEntry.NormalHours,
+                x.TimeEntry.OvertimeHours,
+                x.TimeEntry.Remark,
+                x.TimeEntry.CreatedAt
             })
             .ToListAsync();
 
@@ -535,13 +537,19 @@ public class TimeEntriesController : ApiControllerBase
 
         if (!string.IsNullOrWhiteSpace(employeeType))
         {
-            query = query.Where(t => t.Employee != null && t.Employee.Type == employeeType);
+            var employeeIds = _dbContext.Employees.AsNoTracking()
+                .Where(e => e.TenantId == tenantId && !e.Deleted && e.Type == employeeType)
+                .Select(e => e.Id);
+            query = query.Where(t => employeeIds.Contains(t.EmployeeId));
         }
 
         if (!string.IsNullOrWhiteSpace(workType))
         {
             var trimmedWorkType = workType.Trim();
-            query = query.Where(t => t.Employee != null && t.Employee.WorkType == trimmedWorkType);
+            var employeeIds = _dbContext.Employees.AsNoTracking()
+                .Where(e => e.TenantId == tenantId && !e.Deleted && e.WorkType == trimmedWorkType)
+                .Select(e => e.Id);
+            query = query.Where(t => employeeIds.Contains(t.EmployeeId));
         }
 
         if (projectId.HasValue)
@@ -650,13 +658,19 @@ public class TimeEntriesController : ApiControllerBase
 
         if (!string.IsNullOrWhiteSpace(employeeType))
         {
-            query = query.Where(t => t.Employee != null && t.Employee.Type == employeeType);
+            var employeeIds = _dbContext.Employees.AsNoTracking()
+                .Where(e => e.TenantId == tenantId && !e.Deleted && e.Type == employeeType)
+                .Select(e => e.Id);
+            query = query.Where(t => employeeIds.Contains(t.EmployeeId));
         }
 
         if (!string.IsNullOrWhiteSpace(workType))
         {
             var trimmedWorkType = workType.Trim();
-            query = query.Where(t => t.Employee != null && t.Employee.WorkType == trimmedWorkType);
+            var employeeIds = _dbContext.Employees.AsNoTracking()
+                .Where(e => e.TenantId == tenantId && !e.Deleted && e.WorkType == trimmedWorkType)
+                .Select(e => e.Id);
+            query = query.Where(t => employeeIds.Contains(t.EmployeeId));
         }
 
         if (projectId.HasValue)
@@ -664,18 +678,20 @@ public class TimeEntriesController : ApiControllerBase
             query = query.Where(t => t.ProjectId == projectId.Value);
         }
 
-        var data = await query
-            .GroupBy(t => new
-            {
-                t.ProjectId,
-                ProjectName = t.Project != null ? t.Project.Name : "未关联项目"
-            })
-            .Select(g => new ProjectWorkUnitSummaryDto
-            {
-                ProjectId = g.Key.ProjectId,
-                ProjectName = g.Key.ProjectName,
-                WorkUnits = g.Sum(x => x.NormalHours / 8m + x.OvertimeHours / 6m)
-            })
+        var data = await (from t in query
+                          join p in _dbContext.Projects.AsNoTracking() on t.ProjectId equals p.Id into projectGroup
+                          from p in projectGroup.DefaultIfEmpty()
+                          group t by new
+                          {
+                              t.ProjectId,
+                              ProjectName = p != null ? p.Name : "未关联项目"
+                          } into g
+                          select new ProjectWorkUnitSummaryDto
+                          {
+                              ProjectId = g.Key.ProjectId,
+                              ProjectName = g.Key.ProjectName,
+                              WorkUnits = g.Sum(x => x.NormalHours / 8m + x.OvertimeHours / 6m)
+                          })
             .OrderByDescending(x => x.WorkUnits)
             .ToListAsync();
 
@@ -735,13 +751,19 @@ public class TimeEntriesController : ApiControllerBase
 
         if (!string.IsNullOrWhiteSpace(employeeType))
         {
-            query = query.Where(t => t.Employee != null && t.Employee.Type == employeeType);
+            var employeeIds = _dbContext.Employees.AsNoTracking()
+                .Where(e => e.TenantId == tenantId && !e.Deleted && e.Type == employeeType)
+                .Select(e => e.Id);
+            query = query.Where(t => employeeIds.Contains(t.EmployeeId));
         }
 
         if (!string.IsNullOrWhiteSpace(workType))
         {
             var trimmedWorkType = workType.Trim();
-            query = query.Where(t => t.Employee != null && t.Employee.WorkType == trimmedWorkType);
+            var employeeIds = _dbContext.Employees.AsNoTracking()
+                .Where(e => e.TenantId == tenantId && !e.Deleted && e.WorkType == trimmedWorkType)
+                .Select(e => e.Id);
+            query = query.Where(t => employeeIds.Contains(t.EmployeeId));
         }
 
         if (projectId.HasValue)
@@ -749,18 +771,19 @@ public class TimeEntriesController : ApiControllerBase
             query = query.Where(t => t.ProjectId == projectId.Value);
         }
 
-        var data = await query
-            .GroupBy(t => new
-            {
-                t.EmployeeId,
-                EmployeeName = t.Employee != null ? t.Employee.Name : string.Empty
-            })
-            .Select(g => new EmployeeWorkUnitSummaryDto
-            {
-                EmployeeId = g.Key.EmployeeId,
-                EmployeeName = g.Key.EmployeeName,
-                WorkUnits = g.Sum(x => x.NormalHours / 8m + x.OvertimeHours / 6m)
-            })
+        var data = await (from t in query
+                          join e in _dbContext.Employees.AsNoTracking() on t.EmployeeId equals e.Id
+                          group t by new
+                          {
+                              t.EmployeeId,
+                              EmployeeName = e.Name
+                          } into g
+                          select new EmployeeWorkUnitSummaryDto
+                          {
+                              EmployeeId = g.Key.EmployeeId,
+                              EmployeeName = g.Key.EmployeeName,
+                              WorkUnits = g.Sum(x => x.NormalHours / 8m + x.OvertimeHours / 6m)
+                          })
             .OrderByDescending(x => x.WorkUnits)
             .ToListAsync();
 

@@ -55,7 +55,6 @@ public class AuthController : ApiControllerBase
         else
         {
             var users = await _dbContext.Users.AsNoTracking()
-                .Include(u => u.Tenant)
                 .Where(u => u.Account == account)
                 .ToListAsync();
             if (users.Count == 0)
@@ -69,7 +68,8 @@ public class AuthController : ApiControllerBase
             }
 
             user = users[0];
-            tenant = user.Tenant;
+            tenant = await _dbContext.Tenants.AsNoTracking()
+                .FirstOrDefaultAsync(t => t.Id == user.TenantId);
         }
 
         if (user == null || tenant == null)

@@ -15,6 +15,4 @@ public class Project : TenantEntity
     public string? Remark { get; set; }
 
     public bool Deleted { get; set; }
-
-    public Tenant? Tenant { get; set; }
 }

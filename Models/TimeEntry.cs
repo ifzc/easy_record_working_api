@@ -15,10 +15,4 @@ public class TimeEntry : TenantEntity
     public string? Remark { get; set; }
 
     public bool Deleted { get; set; }
-
-    public Employee? Employee { get; set; }
-
-    public Project? Project { get; set; }
-
-    public Tenant? Tenant { get; set; }
 }
