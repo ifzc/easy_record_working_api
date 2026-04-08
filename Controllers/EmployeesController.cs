@@ -1,4 +1,5 @@
 using System.Text;
+using ClosedXML.Excel;
 using EasyRecordWorkingApi.Contracts;
 using EasyRecordWorkingApi.Data;
 using EasyRecordWorkingApi.Dtos;
@@ -397,6 +398,119 @@ public class EmployeesController : ApiControllerBase
 
     [HttpGet("export")]
     public async Task<IActionResult> ExportEmployees([FromQuery] string? format)
+    {
+        var tenantId = GetTenantId();
+        if (tenantId == Guid.Empty)
+        {
+            return Failure(401, 40103, "未登录");
+        }
+
+        if (!string.IsNullOrWhiteSpace(format) && !string.Equals(format, "xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            return Failure(400, 40001, "参数错误", "format 仅支持 xlsx");
+        }
+
+        var employees = await _db.Queryable<Employee>()
+            .Where(e => e.TenantId == tenantId && !e.Deleted)
+            .OrderBy(e => e.Name)
+            .ToListAsync();
+
+        using var workbook = new XLWorkbook();
+        var worksheet = workbook.Worksheets.Add("员工管理");
+        var headers = new[]
+        {
+            "员工姓名",
+            "员工类型",
+            "工种",
+            "手机号",
+            "身份证号",
+            "备注"
+        };
+
+        for (var index = 0; index < headers.Length; index++)
+        {
+            worksheet.Cell(1, index + 1).Value = headers[index];
+        }
+
+        var rowIndex = 2;
+        foreach (var employee in employees)
+        {
+            worksheet.Cell(rowIndex, 1).Value = employee.Name;
+            worksheet.Cell(rowIndex, 2).Value = employee.Type;
+            worksheet.Cell(rowIndex, 3).Value = employee.WorkType ?? string.Empty;
+            worksheet.Cell(rowIndex, 4).Value = employee.Phone ?? string.Empty;
+            worksheet.Cell(rowIndex, 5).Value = employee.IdCardNumber ?? string.Empty;
+            worksheet.Cell(rowIndex, 6).Value = employee.Remark ?? string.Empty;
+            rowIndex++;
+        }
+
+        var headerRange = worksheet.Range(1, 1, 1, headers.Length);
+        headerRange.Style.Font.Bold = true;
+        headerRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#E2E8F0");
+        worksheet.SheetView.FreezeRows(1);
+        worksheet.RangeUsed()?.SetAutoFilter();
+        worksheet.Columns().AdjustToContents();
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+
+        var fileName = $"员工管理_{DateTime.UtcNow:yyyy-MM-dd}.xlsx";
+        return File(
+            stream.ToArray(),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            fileName
+        );
+    }
+
+    [HttpGet("import-template")]
+    public IActionResult DownloadImportTemplate([FromQuery] string? format)
+    {
+        var tenantId = GetTenantId();
+        if (tenantId == Guid.Empty)
+        {
+            return Failure(401, 40103, "未登录");
+        }
+
+        if (!string.IsNullOrWhiteSpace(format) && !string.Equals(format, "xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            return Failure(400, 40001, "参数错误", "format 仅支持 xlsx");
+        }
+
+        using var workbook = new XLWorkbook();
+        var worksheet = workbook.Worksheets.Add("员工导入模板");
+        var headers = new[]
+        {
+            "员工姓名",
+            "员工类型",
+            "工种",
+            "手机号",
+            "身份证号"
+        };
+
+        for (var index = 0; index < headers.Length; index++)
+        {
+            worksheet.Cell(1, index + 1).Value = headers[index];
+        }
+
+        var headerRange = worksheet.Range(1, 1, 1, headers.Length);
+        headerRange.Style.Font.Bold = true;
+        headerRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#E2E8F0");
+        worksheet.SheetView.FreezeRows(1);
+        worksheet.RangeUsed()?.SetAutoFilter();
+        worksheet.Columns().AdjustToContents();
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+
+        return File(
+            stream.ToArray(),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "员工导入模板.xlsx"
+        );
+    }
+
+    [NonAction]
+    public async Task<IActionResult> ExportEmployeesCsv([FromQuery] string? format)
     {
         var tenantId = GetTenantId();
         if (tenantId == Guid.Empty)

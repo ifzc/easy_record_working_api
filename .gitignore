@@ -5,3 +5,5 @@ obj/
 appsettings.Development.json
 riderModule.iml
 /_ReSharper.Caches/
+
+/bin_verify

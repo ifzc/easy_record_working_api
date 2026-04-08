@@ -1,4 +1,5 @@
 using System.Globalization;
+using ClosedXML.Excel;
 using EasyRecordWorkingApi.Contracts;
 using EasyRecordWorkingApi.Data;
 using EasyRecordWorkingApi.Dtos;
@@ -495,6 +496,157 @@ public class TimeEntriesController : ApiControllerBase
         await _db.UpdateWithTimestampAsync(timeEntry);
 
         return Success(new { });
+    }
+
+    [HttpGet("export")]
+    public async Task<IActionResult> ExportTimeEntriesExcel(
+        [FromQuery(Name = "start_date")] string? startDate,
+        [FromQuery(Name = "end_date")] string? endDate,
+        [FromQuery(Name = "work_type")] string? workType,
+        [FromQuery(Name = "project_id")] Guid? projectId,
+        [FromQuery] string? format)
+    {
+        var tenantId = GetTenantId();
+        if (tenantId == Guid.Empty)
+        {
+            return Failure(401, 40103, "未登录");
+        }
+
+        if (!string.IsNullOrWhiteSpace(format) && !string.Equals(format, "xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            return Failure(400, 40001, "参数错误", "format 仅支持 xlsx");
+        }
+
+        if (!DateOnly.TryParseExact(startDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedStartDate))
+        {
+            return Failure(400, 40001, "参数错误", "start_date 格式应为 YYYY-MM-DD");
+        }
+
+        if (!DateOnly.TryParseExact(endDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedEndDate))
+        {
+            return Failure(400, 40001, "参数错误", "end_date 格式应为 YYYY-MM-DD");
+        }
+
+        if (parsedStartDate.CompareTo(parsedEndDate) > 0)
+        {
+            return Failure(400, 40001, "参数错误", "start_date 不能晚于 end_date");
+        }
+
+        var startDateValue = parsedStartDate.ToDateTime(TimeOnly.MinValue);
+        var endDateValue = parsedEndDate.ToDateTime(TimeOnly.MinValue);
+
+        var query = _db.Queryable<TimeEntry>()
+            .Where(t => t.TenantId == tenantId && !t.Deleted && t.WorkDate >= startDateValue && t.WorkDate <= endDateValue);
+
+        if (!string.IsNullOrWhiteSpace(workType))
+        {
+            var trimmedWorkType = workType.Trim();
+            var empIds = await _db.Queryable<Employee>()
+                .Where(e => e.TenantId == tenantId && !e.Deleted && e.WorkType == trimmedWorkType)
+                .Select(e => e.Id)
+                .ToListAsync();
+            query = query.Where(t => empIds.Contains(t.EmployeeId));
+        }
+
+        if (projectId.HasValue)
+        {
+            query = query.Where(t => t.ProjectId == projectId.Value);
+        }
+
+        var timeEntries = await query.ToListAsync();
+        var employeeIds = timeEntries.Select(t => t.EmployeeId).Distinct().ToList();
+        var projectIds = timeEntries
+            .Where(t => t.ProjectId.HasValue)
+            .Select(t => t.ProjectId!.Value)
+            .Distinct()
+            .ToList();
+
+        var employees = employeeIds.Count > 0
+            ? await _db.Queryable<Employee>()
+                .Where(e => e.TenantId == tenantId && !e.Deleted && employeeIds.Contains(e.Id))
+                .ToListAsync()
+            : new List<Employee>();
+        var projects = projectIds.Count > 0
+            ? await _db.Queryable<Project>()
+                .Where(p => p.TenantId == tenantId && !p.Deleted && projectIds.Contains(p.Id))
+                .ToListAsync()
+            : new List<Project>();
+
+        var employeeMap = employees.ToDictionary(e => e.Id);
+        var projectMap = projects.ToDictionary(p => p.Id);
+        var orderedEntries = timeEntries
+            .OrderBy(t => t.WorkDate)
+            .ThenBy(t => employeeMap.TryGetValue(t.EmployeeId, out var employee) ? employee.Name : string.Empty, StringComparer.Ordinal)
+            .ThenBy(t => t.CreatedAt)
+            .ToList();
+
+        using var workbook = new XLWorkbook();
+        var worksheet = workbook.Worksheets.Add("工时明细");
+        var headers = new[]
+        {
+            "日期",
+            "员工姓名",
+            "标签",
+            "员工类别",
+            "工种",
+            "项目",
+            "常规班次工时",
+            "加班工时",
+            "总工时",
+            "记工",
+            "备注",
+            "创建时间"
+        };
+
+        for (var index = 0; index < headers.Length; index++)
+        {
+            worksheet.Cell(1, index + 1).Value = headers[index];
+        }
+
+        var rowIndex = 2;
+        foreach (var entry in orderedEntries)
+        {
+            employeeMap.TryGetValue(entry.EmployeeId, out var employee);
+            Project? project = null;
+            if (entry.ProjectId.HasValue)
+            {
+                projectMap.TryGetValue(entry.ProjectId.Value, out project);
+            }
+
+            worksheet.Cell(rowIndex, 1).Value = entry.WorkDate;
+            worksheet.Cell(rowIndex, 1).Style.DateFormat.Format = "yyyy-MM-dd";
+            worksheet.Cell(rowIndex, 2).Value = employee?.Name ?? string.Empty;
+            worksheet.Cell(rowIndex, 3).Value = FormatTagsForExport(employee?.Tags);
+            worksheet.Cell(rowIndex, 4).Value = employee?.Type ?? string.Empty;
+            worksheet.Cell(rowIndex, 5).Value = employee?.WorkType ?? string.Empty;
+            worksheet.Cell(rowIndex, 6).Value = project?.Name ?? string.Empty;
+            worksheet.Cell(rowIndex, 7).Value = entry.NormalHours;
+            worksheet.Cell(rowIndex, 8).Value = entry.OvertimeHours;
+            worksheet.Cell(rowIndex, 9).Value = entry.NormalHours + entry.OvertimeHours;
+            worksheet.Cell(rowIndex, 10).Value = entry.NormalHours / 8m + entry.OvertimeHours / 6m;
+            worksheet.Cell(rowIndex, 10).Style.NumberFormat.Format = "0.00";
+            worksheet.Cell(rowIndex, 11).Value = entry.Remark ?? string.Empty;
+            worksheet.Cell(rowIndex, 12).Value = entry.CreatedAt;
+            worksheet.Cell(rowIndex, 12).Style.DateFormat.Format = "yyyy-MM-dd HH:mm:ss";
+            rowIndex++;
+        }
+
+        var headerRange = worksheet.Range(1, 1, 1, headers.Length);
+        headerRange.Style.Font.Bold = true;
+        headerRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#E2E8F0");
+        worksheet.SheetView.FreezeRows(1);
+        worksheet.RangeUsed()?.SetAutoFilter();
+        worksheet.Columns().AdjustToContents();
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+
+        var fileName = $"记工明细_{parsedStartDate:yyyy-MM-dd}_{parsedEndDate:yyyy-MM-dd}.xlsx";
+        return File(
+            stream.ToArray(),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            fileName
+        );
     }
 
     [HttpGet("summary")]
@@ -1047,6 +1199,22 @@ public class TimeEntriesController : ApiControllerBase
 
         var scaled = value * 2;
         return decimal.Truncate(scaled) == scaled;
+    }
+
+    private static string FormatTagsForExport(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return string.Empty;
+        }
+
+        var tags = raw.Contains(TagSeparator)
+            ? raw.Split(TagSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        return string.Join("、", tags
+            .Where(tag => !string.IsNullOrWhiteSpace(tag))
+            .Distinct(StringComparer.OrdinalIgnoreCase));
     }
 }
 
